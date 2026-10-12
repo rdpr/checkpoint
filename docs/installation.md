@@ -73,6 +73,7 @@ Create a namespace and metrics secret. The secret file must contain at least 32 
 kubectl create namespace checkpoint
 kubectl -n checkpoint create secret generic checkpoint-metrics --from-file=token=/private/metrics-token
 helm install checkpoint ./checkpoint-0.2.0.tgz -n checkpoint -f installation.private.yaml
+kubectl -n checkpoint wait --for=create pod/checkpoint-0 --timeout=180s
 kubectl -n checkpoint wait --for=jsonpath='{.status.phase}'=Running pod/checkpoint-0 --timeout=180s
 kubectl -n checkpoint exec -i checkpoint-0 -c app -- node --import tsx server/operator.ts bootstrap < bootstrap.private.json
 kubectl -n checkpoint rollout status statefulset/checkpoint --timeout=120s

@@ -32,6 +32,7 @@ with tempfile.TemporaryDirectory(prefix='pw-kind-') as temporary:
              '--set',f'image.repository={repository}','--set-string',f'image.tag={tag}',
              '--set','origin=https://checkpoint.example.test','--set','storage.accessMode=ReadWriteOnce',
              '--set','storage.dataSize=1Gi','--set','storage.backupSize=1Gi'])
+        k('wait','--for=create','pod/checkpoint-0','--timeout=180s')
         k('wait','--for=jsonpath={.status.phase}=Running','pod/checkpoint-0','--timeout=180s')
         # Wait for the process's liveness, not readiness: bootstrap is required for readiness.
         app('node','-e',"let n=0; const t=setInterval(async()=>{try {const r=await fetch('http://127.0.0.1:4310/livez');if(r.ok){clearInterval(t);process.exit(0)}} catch{} if(++n>60)process.exit(1)},1000)")
