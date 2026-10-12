@@ -1,3 +1,4 @@
+import { ConfirmationProvider } from './Confirm';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { configurePlannotatorUI } from '@plannotator/ui/configure';
@@ -8,6 +9,8 @@ import '@fontsource-variable/inter';
 import '@fontsource-variable/geist-mono';
 import 'katex/dist/katex.min.css';
 import './style.css';
+import './theme.css';
+import './precision.css';
 import { App } from './App';
 import { identityProvider } from './identity';
 import { reviewStorageBackend } from './reviewPreferences';
@@ -23,11 +26,11 @@ configurePlannotatorUI({
       : '',
   uploadTransport: {
     async upload(file) {
-      const documentId = new URLSearchParams(location.search).get('document');
-      if (!documentId)
-        throw new Error('Open a document before attaching an image.');
+      const artifactId = new URLSearchParams(location.search).get('artifact');
+      if (!artifactId)
+        throw new Error('Open an artifact before attaching an image.');
       const response = await fetch(
-        `/api/documents/${encodeURIComponent(documentId)}/images`,
+        `/api/artifacts/${encodeURIComponent(artifactId)}/images`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/octet-stream' },
@@ -61,7 +64,7 @@ class ErrorBoundary extends React.Component<
   render() {
     return this.state.error ? (
       <main className="fatal-error">
-        <h1>The document view could not load.</h1>
+        <h1>The artifact view could not load.</h1>
         <p>Your saved work is safe. Reload to try again.</p>
         <button className="button primary" onClick={() => location.reload()}>
           Reload
@@ -75,12 +78,14 @@ class ErrorBoundary extends React.Component<
 createRoot(document.getElementById('root')!).render(
   <ErrorBoundary>
     <ThemeProvider
-      defaultTheme="light"
+      defaultTheme="system"
       defaultColorTheme="plannotator"
       storageKey="pw-theme"
       colorThemeStorageKey="pw-palette"
     >
-      <App />
+      <ConfirmationProvider>
+        <App />
+      </ConfirmationProvider>
     </ThemeProvider>
   </ErrorBoundary>,
 );

@@ -1,9 +1,7 @@
+import { Appearance } from './Appearance';
 import { useState, type FormEvent } from 'react';
 import {
   ArrowRight,
-  FileText,
-  MessageSquare,
-  History,
   ShieldCheck,
 } from 'lucide-react';
 import type { User } from '../shared/types';
@@ -59,30 +57,14 @@ export function Auth({
       <div className="auth-story">
         <Brand />
         <div className="auth-message">
-          <span className="eyebrow">A LITTLE SPACE FOR BETTER THINKING</span>
           <h1>
-            Good work starts
+            Review the plan.
             <br />
-            with a shared plan<span>.</span>
+            Keep the decision.
           </h1>
-          <p>
-            A home for the documents, discussions, and decisions that move your
-            work forward.
-          </p>
-          <div className="auth-features">
-            <span>
-              <FileText size={18} />
-              Write with clarity
-            </span>
-            <span>
-              <MessageSquare size={18} />
-              Review together
-            </span>
-            <span>
-              <History size={18} />
-              Keep every revision
-            </span>
-          </div>
+        </div>
+        <div className="auth-appearance">
+          <Appearance />
         </div>
         <div className="auth-footer">
           <ShieldCheck size={16} /> Self-hosted. Your team, your data.
@@ -129,27 +111,20 @@ export function Auth({
               </p>
             </>
           )}
-          <span className="eyebrow">
-            {needsSetup
-              ? 'YOUR FIRST WORKSPACE'
-              : invitation
-                ? 'YOU’RE INVITED'
-                : 'WELCOME BACK'}
-          </span>
           <h2>
             {needsSetup
-              ? 'Make room for your ideas.'
+              ? 'Create owner account'
               : creating
-                ? 'Join the workspace.'
-                : 'Pick up where you left off.'}
+                ? 'Join the workspace'
+                : 'Sign in'}
           </h2>
-          <p className="muted">
+          {(needsSetup || invitation) && <p className="muted">
             {needsSetup
               ? 'Create the owner account to get started. Teammates join by invitation.'
               : invitation
                 ? `You’ve been invited to ${inviteName ?? 'a workspace'}. ${creating ? 'Create an account to join.' : 'Sign in to accept.'}`
-                : 'Sign in to your shared plans and discussions.'}
-          </p>
+                : ''}
+          </p>}
           <ErrorMessage message={error} />
           {needsSetup && !setupAllowed ? (
             <ErrorMessage message="First-time setup is only available on the local server. Ask the administrator to create the owner account locally." />
@@ -217,9 +192,6 @@ export function Auth({
                 : 'New here? Create an account'}
             </button>
           )}
-          <p className="auth-note">
-            Built with Plannotator’s open-source document UI.
-          </p>
         </form>
       </main>
     </div>

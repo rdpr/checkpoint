@@ -1,6 +1,7 @@
+import { Appearance } from './Appearance';
 import { useEffect, useState } from 'react';
 import { api, post, errorText } from './api';
-import { Modal, ErrorMessage, Loading } from './ui';
+import { SettingsPage, ErrorMessage, Loading } from './ui';
 export function Account({ onClose }: { onClose: () => void }) {
   const [status, setStatus] = useState<{
     enabled: boolean;
@@ -14,10 +15,24 @@ export function Account({ onClose }: { onClose: () => void }) {
       .catch((e) => setError(errorText(e)));
   }, []);
   return (
-    <Modal title="Account" onClose={onClose}>
+    <SettingsPage title="Account" onClose={onClose}>
+      <section className="settings-section">
+        <h2>Appearance</h2>
+        <p className="muted">
+          Theme preference is saved in this browser.
+        </p>
+        <Appearance />
+      </section>
+      <h2>Identity</h2>
       <ErrorMessage message={error} />
       {!status ? (
-        <Loading />
+        error ? (
+          <button className="button" onClick={() => location.reload()}>
+            Retry
+          </button>
+        ) : (
+          <Loading />
+        )
       ) : status.linked ? (
         <p>
           Your Microsoft account is connected. You can use Microsoft sign-in on
@@ -64,6 +79,6 @@ export function Account({ onClose }: { onClose: () => void }) {
           </button>
         </form>
       )}
-    </Modal>
+    </SettingsPage>
   );
 }

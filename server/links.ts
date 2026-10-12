@@ -1,7 +1,7 @@
 import { marked } from 'marked';
 // Parse links with the same Markdown parser used by the pinned UI. Code spans,
-// fenced examples and images are not document navigation links.
-export function documentLinks(body: string) {
+// fenced examples and images are not artifact navigation links.
+export function artifactLinks(body: string) {
   const links = new Set<string>();
   marked.walkTokens(marked.lexer(body), (token) => {
     if (token.type === 'link' && relativePath(token.href, 'root.md') !== null)

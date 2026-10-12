@@ -1,6 +1,6 @@
 {
   "name": "checkpoint",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -21,6 +21,7 @@
     "release:package": "node --import tsx ops/release.ts package"
   },
   "dependencies": {
+    "@base-ui/react": "1.9.0",
     "@fontsource-variable/geist-mono": "^5.2.0",
     "@fontsource-variable/inter": "^5.2.0",
     "@modelcontextprotocol/sdk": "^1.0.0",

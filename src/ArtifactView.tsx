@@ -1,6 +1,9 @@
+import { createPortal } from 'react-dom';
+import { useConfirm } from './Confirm';
+import { Select } from './Select';
 import { PopoverDraftScope } from './popoverDrafts';
 import { readDraft, writeDraft } from './drafts';
-import { DocumentActions } from './Discovery';
+import { ArtifactActions } from './Discovery';
 import {
   lazy,
   Suspense,
@@ -11,6 +14,8 @@ import {
   type FormEvent,
 } from 'react';
 import {
+  PanelRight,
+  Plus,
   BookOpen,
   Pencil,
   GitCompareArrows,
@@ -31,7 +36,7 @@ import { currentDecisions } from '../shared/review';
 import type { Comparison } from './RevisionDiff';
 import { AnnotationType, type Annotation } from '@plannotator/ui/types';
 import type {
-  Document,
+  Artifact,
   Comment,
   Revision,
   User,
@@ -47,9 +52,9 @@ import {
   initials,
   download,
 } from './api';
-import { ErrorMessage, Loading } from './ui';
-import { DocumentRequests } from './ReviewRequests';
-import { ReviewStatus } from './ReviewStatus';
+import { ErrorMessage, Loading, ReviewPanel, Modal, ActionPopover } from './ui';
+import { ArtifactRequests } from './ReviewRequests';
+import { ReviewStatus, ReviewActivity } from './ReviewStatus';
 import { useReviewDraft } from './useReviewDraft';
 import type { z } from 'zod';
 import type { addComment as commentSchema } from '../server/schemas';
@@ -64,7 +69,7 @@ type PendingComment = {
 };
 type Draft = { body: string; baseRevisionId: string; baseBody: string };
 
-export function DocumentView({
+export function ArtifactView({
   id,
   user,
   workspace,
@@ -87,6 +92,10 @@ export function DocumentView({
   onSaved: () => void;
   onLink: (path: string, revisionId: string) => void;
 }) {
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [requestContextTarget, setRequestContextTarget] =
+    useState<HTMLDivElement | null>(null);
+  const headerActions = document.getElementById('artifact-header-actions');
   const [pendingComments, setPendingComments, commentStorageError] =
     useReviewDraft<PendingComment[]>(`pw-comment-drafts:${user.id}:${id}`, []);
   const [discussionDraft, setDiscussionDraft, discussionStorageError] =
@@ -113,9 +122,10 @@ export function DocumentView({
     null,
   );
   const [requestRevision, setRequestRevision] = useState<Revision | null>(null);
-  const [doc, setDoc] = useState<Document | null>(null),
+  const [doc, setDoc] = useState<Artifact | null>(null),
     [comments, setComments] = useState<Comment[]>([]),
     [revisions, setRevisions] = useState<Omit<Revision, 'body'>[]>([]);
+  const confirm = useConfirm();
   const [draft, setDraft] = useState<Draft | null>(null),
     draftRef = useRef<Draft | null>(null);
   const [mode, setMode] = useState<'read' | 'edit' | 'compare'>('read'),
@@ -136,6 +146,8 @@ export function DocumentView({
   const [feedbackCopied, setFeedbackCopied] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
   const { reviewMode, inputMethod, showResolved, layout } = preferences;
+  const [mobilePanel, setMobilePanel] = useState(false);
+  const beforeFocus = useRef<'normal' | 'wide'>('normal');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [contentsOpen, setContentsOpen] = useState(false);
   const contentsButtonRef = useRef<HTMLButtonElement>(null);
@@ -178,6 +190,15 @@ export function DocumentView({
     query.addEventListener('change', resize);
     return () => query.removeEventListener('change', resize);
   }, []);
+  useEffect(() => {
+    if (selected) {
+      setMobilePanel(true);
+      updatePreferences({ panelVisible: true });
+    }
+  }, [selected]);
+  useEffect(() => {
+    setMobilePanel(false);
+  }, [historical?.id]);
   const locationRevisionId =
     historical?.id ?? requestRevision?.id ?? doc?.currentRevisionId;
   const [locationReport, setLocationReport] = useState<{
@@ -216,7 +237,7 @@ export function DocumentView({
     const timer = setInterval(() => {
       const headings = Array.from(
         document.querySelectorAll<HTMLElement>(
-          '.document-surface h1,.document-surface h2,.document-surface h3,.document-surface h4,.document-surface h5,.document-surface h6',
+          '.artifact-surface h1,.artifact-surface h2,.artifact-surface h3,.artifact-surface h4,.artifact-surface h5,.artifact-surface h6',
         ),
       );
       const target = headings.find(
@@ -255,8 +276,8 @@ export function DocumentView({
   );
   async function reloadDiscussions() {
     const [nextComments, nextRevisions] = await Promise.all([
-      api<Comment[]>(`/documents/${id}/comments`),
-      api<Omit<Revision, 'body'>[]>(`/documents/${id}/revisions`),
+      api<Comment[]>(`/artifacts/${id}/comments`),
+      api<Omit<Revision, 'body'>[]>(`/artifacts/${id}/revisions`),
     ]);
     if (alive.current) {
       setComments(nextComments);
@@ -267,15 +288,15 @@ export function DocumentView({
     alive.current = true;
     async function refresh(initial = false) {
       try {
-        const next = await api<Document>(`/documents/${id}`);
+        const next = await api<Artifact>(`/artifacts/${id}`);
         if (!alive.current) return;
         setDoc(next);
         if (requestId) {
           const request = await api<ReviewRequest>(
             `/review-requests/${requestId}`,
           );
-          if (request.documentId !== id)
-            throw new Error('This request belongs to another document.');
+          if (request.artifactId !== id)
+            throw new Error('This request belongs to another artifact.');
           if (!alive.current) return;
           setFocusedRequest(request);
         }
@@ -300,7 +321,7 @@ export function DocumentView({
           );
           if (revisionId) {
             const revision = await api<Revision>(
-              `/documents/${id}/revisions/${revisionId}`,
+              `/artifacts/${id}/revisions/${revisionId}`,
             );
             if (alive.current) {
               setHistorical(revision);
@@ -311,7 +332,7 @@ export function DocumentView({
           if (!requestId && params.get('base') && params.get('target')) {
             const [base, target] = await Promise.all(
               [params.get('base'), params.get('target')].map((rid) =>
-                api<Revision>(`/documents/${id}/revisions/${rid}`),
+                api<Revision>(`/artifacts/${id}/revisions/${rid}`),
               ),
             );
             if (alive.current) {
@@ -334,12 +355,12 @@ export function DocumentView({
             'revision',
           );
           const target = await api<Revision>(
-            `/documents/${id}/revisions/${historicalId ?? request.revisionId}`,
+            `/artifacts/${id}/revisions/${historicalId ?? request.revisionId}`,
           );
           const base =
             !historicalId && request.baseRevisionId
               ? await api<Revision>(
-                  `/documents/${id}/revisions/${request.baseRevisionId}`,
+                  `/artifacts/${id}/revisions/${request.baseRevisionId}`,
                 )
               : null;
           if (alive.current) {
@@ -412,7 +433,7 @@ export function DocumentView({
   async function save() {
     if (!draft) return;
     await action(async () => {
-      const saved = await api<Document>(`/documents/${id}`, {
+      const saved = await api<Artifact>(`/artifacts/${id}`, {
         method: 'PUT',
         body: JSON.stringify({
           body: draft.body,
@@ -434,7 +455,7 @@ export function DocumentView({
     if (!doc) return;
     await action(async () => {
       const target = targetId
-        ? await api<Revision>(`/documents/${id}/revisions/${targetId}`)
+        ? await api<Revision>(`/artifacts/${id}/revisions/${targetId}`)
         : doc.revision;
       const previous = revisions.filter((r) => r.number < target.number);
       const reviewed = previous.filter((r) =>
@@ -448,7 +469,7 @@ export function DocumentView({
         [...previous].sort((a, b) => b.number - a.number)[0]?.id;
       if (!baseline) return;
       const base = await api<Revision>(
-        `/documents/${id}/revisions/${baseline}`,
+        `/artifacts/${id}/revisions/${baseline}`,
       );
       setVersion(null, false);
       const url = new URL(location.href);
@@ -467,7 +488,7 @@ export function DocumentView({
     savingComments.current.add(submissionId);
     await action(async () => {
       const comment = await post<Comment>(
-        `/documents/${id}/comments`,
+        `/artifacts/${id}/comments`,
         pending.payload,
       );
       // Clear on confirmed POST success, independently of a subsequent refresh.
@@ -492,7 +513,7 @@ export function DocumentView({
           : (requestRevision ?? doc.revision).number,
       payload: {
         submissionId: crypto.randomUUID(),
-        documentId: id,
+        artifactId: id,
         revisionId:
           mode === 'compare' && comparison
             ? comparison.target.id
@@ -541,7 +562,7 @@ export function DocumentView({
   }
   if (unavailable)
     return (
-      <div className="document-empty">
+      <div className="artifact-empty">
         <ErrorMessage message={error} />
         <p>Saved server content is hidden until access is restored.</p>
         {draft && (
@@ -556,11 +577,11 @@ export function DocumentView({
     );
   if (!doc || requestLoading)
     return error ? (
-      <div className="document-empty">
+      <div className="artifact-empty">
         <ErrorMessage message={error} />
       </div>
     ) : (
-      <Loading label="Opening document…" />
+      <Loading label="Opening artifact…" />
     );
   const comparing = mode === 'compare' && comparison;
   const displayed = comparing
@@ -595,86 +616,233 @@ export function DocumentView({
       ? (draft?.body ?? displayed.body)
       : displayed.body;
   return (
-    <div ref={setLayoutViewport} className={`document-layout layout-${layout}`}>
-      <section className="document-main">
-        {doc.archivedAt && (
-          <div className="archive-banner" role="status">
-            Archived · This document is read-only. Its history and discussions
-            are preserved.
-          </div>
-        )}
-        <div className="document-toolbar">
-          <div className="segmented" aria-label="Document mode">
+    <div
+      ref={setLayoutViewport}
+      className={`artifact-layout layout-${layout} ${!preferences.panelVisible ? 'panel-hidden' : ''}`}
+    >
+      <div className="artifact-heading">
+        <ReviewStatus
+          doc={doc}
+          revision={displayed}
+          user={user}
+          request={focusedRequest}
+          onReadLatest={() => setVersion(null)}
+          canReview={
+            canEdit &&
+            !historical &&
+            !changed &&
+            (mode === 'read' || !!comparing) &&
+            displayed.id === doc.currentRevisionId
+          }
+          busy={busy}
+          onReview={(revisionId, decision, note) =>
+            action(async () => {
+              const saved = await post<Artifact>(`/artifacts/${id}/reviews`, {
+                expectedRevisionId: revisionId,
+                decision,
+                note,
+              });
+              if (alive.current) setDoc(saved);
+              if (requestId) {
+                void api<ReviewRequest>(`/review-requests/${requestId}`)
+                  .then((r) => {
+                    if (alive.current) setFocusedRequest(r);
+                  })
+                  .catch(() => {}); // Normal polling retries a failed status refresh.
+              }
+            })
+          }
+        />
+      </div>
+      <div className="artifact-toolbar">
+        <div className="segmented" aria-label="Artifact mode">
+          <button
+            aria-pressed={mode === 'read' && tab !== 'history'}
+            className={mode === 'read' ? 'active' : ''}
+            onClick={() => {
+              setMode('read');
+              setTab('comments');
+              setComparison(null);
+            }}
+          >
+            <BookOpen size={15} />
+            Artifact
+          </button>
+          {canEdit && !historical && (
             <button
-              className={mode === 'read' ? 'active' : ''}
+              aria-pressed={mode === 'edit' && tab !== 'history'}
+              className={mode === 'edit' ? 'active' : ''}
               onClick={() => {
-                setMode('read');
+                setTab('comments');
+                if (!draft)
+                  updateDraft({
+                    body: doc.revision.body,
+                    baseBody: doc.revision.body,
+                    baseRevisionId: doc.currentRevisionId,
+                  });
                 setComparison(null);
+                setRequestRevision(null);
+                setReattaching(null);
+                setMode('edit');
               }}
             >
-              <BookOpen size={15} />
-              Read
+              <Pencil size={15} />
+              Edit
             </button>
-            {canEdit && !historical && (
-              <button
-                className={mode === 'edit' ? 'active' : ''}
-                onClick={() => {
-                  if (!draft)
-                    updateDraft({
-                      body: doc.revision.body,
-                      baseBody: doc.revision.body,
-                      baseRevisionId: doc.currentRevisionId,
-                    });
+          )}
+          {(historical || draft) && (
+            <button
+              aria-pressed={mode === 'compare' && tab !== 'history'}
+              className={mode === 'compare' ? 'active' : ''}
+              onClick={() => {
+                if (historical)
+                  void openComparison(
+                    historical.id === doc.currentRevisionId
+                      ? undefined
+                      : historical.id,
+                  );
+                else {
                   setComparison(null);
-                  setRequestRevision(null);
-                  setReattaching(null);
-                  setMode('edit');
-                }}
-              >
-                <Pencil size={15} />
-                Edit
+                  setTab('comments');
+                  setMode('compare');
+                }
+              }}
+            >
+              <GitCompareArrows size={15} />
+              Changes
+            </button>
+          )}
+          {revisions.length > 1 && !historical && !changed && (
+            <button
+              aria-pressed={!!comparing && tab !== 'history'}
+              className={comparing ? 'active' : ''}
+              disabled={busy}
+              onClick={() => void openComparison()}
+            >
+              <GitCompareArrows size={15} /> Review changes
+            </button>
+          )}
+        </div>
+        <button
+          className={`activity-tab ${tab === 'history' ? 'active' : ''}`}
+          aria-pressed={tab === 'history'}
+          onClick={() => {
+            setTab('history');
+            updatePreferences({
+              panelVisible: true,
+              ...(layout === 'focus' ? { layout: beforeFocus.current } : {}),
+            });
+            if (narrow) setMobilePanel(true);
+          }}
+        >
+          Activity
+        </button>
+        <div
+          className="reading-controls"
+          role="region"
+          aria-label="Reading controls"
+        >
+          <button
+            className={`text-button focus-toggle ${layout === 'focus' ? 'active' : ''}`}
+            aria-pressed={layout === 'focus'}
+            onClick={() => {
+              if (layout !== 'focus') beforeFocus.current = layout;
+              updatePreferences({
+                layout: layout === 'focus' ? beforeFocus.current : 'focus',
+              });
+            }}
+          >
+            {layout === 'focus' ? 'Exit focus' : 'Focus'}
+          </button>
+          <button
+            className="icon-button discussion-toggle"
+            aria-label={`Discussion · ${openCount}`}
+            title="Toggle discussions"
+            aria-expanded={
+              narrow
+                ? mobilePanel
+                : preferences.panelVisible && layout !== 'focus'
+            }
+            onClick={() => {
+              if (tab === 'history') {
+                setTab('comments');
+                updatePreferences({ panelVisible: true });
+                if (narrow) setMobilePanel(true);
+                return;
+              }
+              if (narrow) setMobilePanel(true);
+              else {
+                if (layout === 'focus')
+                  updatePreferences({
+                    layout: beforeFocus.current,
+                    panelVisible: true,
+                  });
+                else
+                  updatePreferences({
+                    panelVisible: !preferences.panelVisible,
+                  });
+              }
+            }}
+          >
+            <PanelRight size={17} />
+          </button>
+          <div className="contents-control">
+            <button
+              className="text-button"
+              aria-expanded={contentsOpen && mode === 'read'}
+              ref={contentsButtonRef}
+              aria-controls="artifact-contents"
+              disabled={mode !== 'read'}
+              onClick={() => setContentsOpen(!contentsOpen)}
+            >
+              Contents
+            </button>
+            <div
+              id="artifact-contents"
+              className="contents-popover"
+              hidden={!contentsOpen || mode !== 'read'}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setContentsOpen(false);
+                  e.stopPropagation();
+                  e.currentTarget.parentElement
+                    ?.querySelector('button')
+                    ?.focus();
+                }
+              }}
+            >
+              <div ref={setTocTarget} />
+              <button className="text-button" onClick={closeContents}>
+                Close contents
               </button>
-            )}
-            {(historical || draft) && (
-              <button
-                className={mode === 'compare' ? 'active' : ''}
-                onClick={() => {
-                  if (historical)
-                    void openComparison(
-                      historical.id === doc.currentRevisionId
-                        ? undefined
-                        : historical.id,
-                    );
-                  else {
-                    setComparison(null);
-                    setMode('compare');
-                  }
-                }}
-              >
-                <GitCompareArrows size={15} />
-                Changes
-              </button>
-            )}
-            {revisions.length > 1 && !historical && !changed && (
-              <button
-                className={comparing ? 'active' : ''}
-                disabled={busy}
-                onClick={() => void openComparison()}
-              >
-                <GitCompareArrows size={15} /> Review changes
-              </button>
-            )}
+            </div>
           </div>
+          <ActionPopover label="Review options">
+            <span className="menu-label">Reading width</span>
+            {(['normal', 'wide'] as const).map((value) => (
+              <button
+                key={value}
+                className="text-button"
+                aria-pressed={layout === value}
+                onClick={() => updatePreferences({ layout: value })}
+              >
+                {value === 'normal' ? 'Normal' : 'Wide'}
+                {layout === value && <Check size={14} />}
+              </button>
+            ))}
+            <div className="menu-divider" />
+            <button
+              className="text-button"
+              onClick={() => setSettingsOpen(true)}
+            >
+              Custom labels
+            </button>
+          </ActionPopover>
+        </div>
+      </div>
+      {headerActions &&
+        createPortal(
           <div className="toolbar-actions">
-            {workspace.role !== 'viewer' && (
-              <DocumentActions
-                doc={doc}
-                onChanged={(next) => {
-                  setDoc(next);
-                  onSaved();
-                }}
-              />
-            )}
             {changed && !historical ? (
               <>
                 <span className="draft-indicator">Unsaved draft</span>
@@ -695,21 +863,8 @@ export function DocumentView({
             )}
             <button
               className="icon-button"
-              title="Download Markdown"
-              aria-label="Download Markdown"
-              onClick={() =>
-                download(
-                  doc.path.split('/').pop()!,
-                  draft?.body ?? displayed.body,
-                )
-              }
-            >
-              <Download size={16} />
-            </button>
-            <button
-              className="icon-button"
-              title="Copy document link"
-              aria-label="Copy document link"
+              title="Copy artifact link"
+              aria-label="Copy artifact link"
               onClick={() => {
                 navigator.clipboard
                   .writeText(location.href)
@@ -719,80 +874,60 @@ export function DocumentView({
                   })
                   .catch(() =>
                     setError(
-                      'Copy the URL from your browser to share this document.',
+                      'Copy the URL from your browser to share this artifact.',
                     ),
                   );
               }}
             >
               {copied ? <Check size={16} /> : <LinkIcon size={16} />}
+              <span>{copied ? 'Copied' : 'Copy link'}</span>
             </button>
-          </div>
-        </div>
-        <div
-          className="reading-controls"
-          role="region"
-          aria-label="Reading controls"
-        >
-          <div className="segmented" aria-label="Reading layout">
-            {(['normal', 'wide', 'focus'] as const).map((value) => (
+            <ActionPopover label="Artifact actions">
+              {' '}
+              {workspace.role !== 'viewer' && (
+                <ArtifactActions
+                  doc={doc}
+                  onChanged={(next) => {
+                    setDoc(next);
+                    onSaved();
+                  }}
+                />
+              )}
               <button
-                key={value}
-                aria-pressed={layout === value}
-                className={layout === value ? 'active' : ''}
-                title={
-                  value === 'wide'
-                    ? 'Hide side panels and expand the document'
-                    : value === 'focus'
-                      ? 'Hide side panels and keep a comfortable reading width'
-                      : 'Restore side panels'
+                className="icon-button"
+                title="Download Markdown"
+                aria-label="Download Markdown"
+                onClick={() =>
+                  download(
+                    doc.path.split('/').pop()!,
+                    draft?.body ?? displayed.body,
+                  )
                 }
-                onClick={() => updatePreferences({ layout: value })}
               >
-                {value === 'normal'
-                  ? 'Normal'
-                  : value === 'wide'
-                    ? 'Wide'
-                    : 'Focus'}
+                <Download size={16} /> Download Markdown
               </button>
-            ))}
+            </ActionPopover>{' '}
+          </div>,
+          headerActions,
+        )}
+      <section className="artifact-main">
+        {doc.archivedAt && (
+          <div className="archive-banner" role="status">
+            Archived · This artifact is read-only. Its history and discussions
+            are preserved.
           </div>
-          <div className="contents-control">
-            <button
-              className="text-button"
-              aria-expanded={contentsOpen && mode === 'read'}
-              ref={contentsButtonRef}
-              aria-controls="document-contents"
-              disabled={mode !== 'read'}
-              onClick={() => setContentsOpen(!contentsOpen)}
-            >
-              Contents
-            </button>
-            <div
-              id="document-contents"
-              className="contents-popover"
-              hidden={!contentsOpen || mode !== 'read'}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  setContentsOpen(false);
-                  e.stopPropagation();
-                  e.currentTarget.parentElement
-                    ?.querySelector('button')
-                    ?.focus();
-                }
-              }}
-            >
-              <div ref={setTocTarget} />
-              <button className="text-button" onClick={closeContents}>
-                Close contents
-              </button>
-            </div>
-          </div>
-          <button className="text-button" onClick={() => setSettingsOpen(true)}>
-            Custom labels
-          </button>
-        </div>
+        )}
         {settingsOpen && (
-          <Suspense fallback={<Loading label="Loading labels…" />}>
+          <Suspense
+            fallback={
+              <Modal
+                title="Custom labels"
+                onClose={() => setSettingsOpen(false)}
+              >
+                <Loading label="Loading labels…" />
+              </Modal>
+            }
+          >
             <ReviewSettings onClose={() => setSettingsOpen(false)} />
           </Suspense>
         )}
@@ -894,59 +1029,11 @@ export function DocumentView({
             )}
           </div>
         )}
-        <ReviewStatus
-          doc={doc}
-          revision={displayed}
-          user={user}
-          request={focusedRequest}
-          onReadLatest={() => setVersion(null)}
-          canReview={
-            canEdit &&
-            !historical &&
-            !changed &&
-            (mode === 'read' || !!comparing) &&
-            displayed.id === doc.currentRevisionId
-          }
-          busy={busy}
-          onReview={(revisionId, decision, note) =>
-            action(async () => {
-              const saved = await post<Document>(`/documents/${id}/reviews`, {
-                expectedRevisionId: revisionId,
-                decision,
-                note,
-              });
-              if (alive.current) setDoc(saved);
-              if (requestId) {
-                void api<ReviewRequest>(`/review-requests/${requestId}`)
-                  .then((r) => {
-                    if (alive.current) setFocusedRequest(r);
-                  })
-                  .catch(() => {}); // Normal polling retries a failed status refresh.
-              }
-            })
-          }
-        />
-        <DocumentRequests
-          documentId={id}
-          user={user}
-          workspaceId={workspace.id}
-          revision={displayed}
-          onReadLatest={() => setVersion(null)}
-          currentRevisionId={doc.currentRevisionId}
-          canRequest={
-            canEdit &&
-            !changed &&
-            mode !== 'edit' &&
-            displayed.id === doc.currentRevisionId
-          }
-          refreshKey={doc.reviews.length}
-          onOpen={onOpenRequest}
-        />
         {comparing && (
           <div className="comparison-banner">
             <label>
               Compare from
-              <select
+              <Select
                 aria-label="Comparison baseline"
                 value={comparing.base.id}
                 disabled={busy}
@@ -961,7 +1048,7 @@ export function DocumentView({
                       Revision {r.number}
                     </option>
                   ))}
-              </select>
+              </Select>
             </label>
             <span>
               to revision {comparing.target.number} ·{' '}
@@ -1015,15 +1102,15 @@ export function DocumentView({
               <button
                 className="button small-button"
                 disabled={busy}
-                onClick={() => {
+                onClick={async () => {
                   if (
-                    confirm(
+                    await confirm(
                       `Restore revision ${historical.number} as a new revision? Existing history and any local draft will be kept.`,
                     )
                   )
                     void action(async () => {
-                      const restored = await post<Document>(
-                        `/documents/${id}/restore`,
+                      const restored = await post<Artifact>(
+                        `/artifacts/${id}/restore`,
                         {
                           revisionId: historical.id,
                           expectedRevisionId: doc.currentRevisionId,
@@ -1094,8 +1181,11 @@ export function DocumentView({
             </span>
             <button
               className="text-button"
-              onClick={() => {
-                if (!changed || confirm('Discard your unsaved changes?')) {
+              onClick={async () => {
+                if (
+                  !changed ||
+                  (await confirm('Discard your unsaved changes?'))
+                ) {
                   updateDraft(null);
                   setMode('read');
                   setConflict(false);
@@ -1106,16 +1196,12 @@ export function DocumentView({
             </button>
           </div>
         )}
-        <div className="document-scroll" ref={setScrollViewport}>
-          <div className="document-meta">
-            <span className="eyebrow">{doc.path}</span>
-            <span>
-              REV {displayed.number.toString().padStart(2, '0')}{' '}
-              <span className="meta-dot">·</span> {displayed.authorName}
-              {displayed.agentName ? ` / ${displayed.agentName}` : ''}
-            </span>
-          </div>
-          <div className="document-surface" data-testid="document-surface">
+        <div className="artifact-scroll" ref={setScrollViewport}>
+          <div
+            className="review-invitation-slot"
+            ref={setRequestContextTarget}
+          />
+          <div className="artifact-surface" data-testid="artifact-surface">
             <PopoverDraftScope.Provider
               value={`${id}:${displayed.id}${comparison ? `:${comparison.base.id}` : ''}`}
             >
@@ -1152,7 +1238,7 @@ export function DocumentView({
                         ? doc.revision.body
                         : editorBody
                     }
-                    documentId={`${id}:${historical?.id ?? draft?.baseRevisionId ?? doc.currentRevisionId}`}
+                    artifactId={`${id}:${historical?.id ?? draft?.baseRevisionId ?? doc.currentRevisionId}`}
                     mode={mode}
                     layout={layout}
                     tocTarget={tocTarget}
@@ -1235,7 +1321,7 @@ export function DocumentView({
               </Suspense>
             </PopoverDraftScope.Provider>
           </div>
-          <div className="document-footer">
+          <div className="artifact-footer">
             <span>Saved {dateLabel(displayed.createdAt)}</span>
             <span>
               {displayed.body.trim().split(/\s+/).filter(Boolean).length} words
@@ -1243,74 +1329,51 @@ export function DocumentView({
           </div>
         </div>
       </section>
-      <aside className="review-panel">
-        <div className="review-tabs">
-          <button
-            className={tab === 'comments' ? 'active' : ''}
-            onClick={() => setTab('comments')}
-          >
-            <MessageSquare size={16} />
-            Discussion <span>{openCount}</span>
-          </button>
-          <button
-            className={tab === 'history' ? 'active' : ''}
-            onClick={() => setTab('history')}
-          >
-            <History size={16} />
-            History
-          </button>
-        </div>
+      <ReviewPanel
+        title={tab === 'history' ? 'Artifact activity' : 'Artifact discussion'}
+        mobile={narrow}
+        open={mobilePanel}
+        onClose={() => setMobilePanel(false)}
+      >
         {tab === 'comments' ? (
           <>
-            <div className="panel-heading">
-              <div>
-                <h2>Make the plan better.</h2>
-                <p>Select or pinpoint a passage to review it.</p>
-              </div>
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={showResolved}
-                  onChange={(e) =>
-                    updatePreferences({ showResolved: e.target.checked })
+            <div className="discussion-heading">
+              <h2>
+                Discussions <span>{openCount}</span>
+              </h2>
+              {canEdit && !historical && (
+                <button
+                  className="icon-button"
+                  aria-label={
+                    discussionDraft
+                      ? 'Resume discussion draft'
+                      : 'New discussion'
                   }
-                />
-                Show resolved
-              </label>
+                  title={
+                    discussionDraft
+                      ? 'Resume discussion draft'
+                      : 'New discussion'
+                  }
+                  onClick={() => setComposerOpen(true)}
+                >
+                  <Plus size={19} />
+                </button>
+              )}
             </div>
-            <div className="feedback-actions">
+            <div className="discussion-filters">
               <button
-                className="text-button"
-                disabled={busy}
-                onClick={() =>
-                  void action(async () => {
-                    const { markdown } = await api<{ markdown: string }>(
-                      `/documents/${id}/revisions/${displayed.id}/feedback`,
-                    );
-                    await navigator.clipboard.writeText(markdown);
-                    setFeedbackCopied(true);
-                    setTimeout(() => setFeedbackCopied(false), 2000);
-                  })
-                }
+                className={!showResolved ? 'active' : ''}
+                aria-pressed={!showResolved}
+                onClick={() => updatePreferences({ showResolved: false })}
               >
-                {feedbackCopied ? 'Feedback copied' : 'Copy review feedback'}
+                Open
               </button>
               <button
-                className="text-button"
-                disabled={busy}
-                onClick={() =>
-                  void action(async () => {
-                    const { markdown } = await api<{ markdown: string }>(
-                      `/documents/${id}/revisions/${displayed.id}/feedback`,
-                    );
-                    download(
-                      `review-revision-${displayed.number}.md`,
-                      markdown,
-                    );
-                  })
-                }
+                className={showResolved ? 'active' : ''}
+                aria-pressed={showResolved}
+                onClick={() => updatePreferences({ showResolved: true })}
               >
-                Download feedback
+                All activity
               </button>
             </div>
             <div className="comment-list">
@@ -1404,89 +1467,95 @@ export function DocumentView({
                   <h3>
                     {historical
                       ? 'No discussions on this revision'
-                      : 'A fresh perspective starts here'}
+                      : 'No open discussions'}
                   </h3>
                   <p>
                     {historical
-                      ? 'Return to the latest document to continue the conversation.'
+                      ? 'Return to the latest artifact to continue the conversation.'
                       : 'Ask a question, suggest a change, or leave a note for your team.'}
                   </p>
                 </div>
               )}
             </div>
-            {canEdit && !historical && (
-              <form
-                className="new-comment"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const body = discussionDraft?.body ?? '';
-                  if (!body.trim()) return;
-                  const pending: PendingComment = {
-                    revisionNumber:
-                      discussionDraft?.revisionNumber ?? displayed.number,
-                    payload: {
-                      submissionId: crypto.randomUUID(),
-                      documentId: id,
-                      body,
-                      revisionId: discussionDraft?.revisionId ?? displayed.id,
-                      kind: 'comment',
-                      quote: '',
-                      labelTip: null,
-                      images: [],
-                      diff: null,
-                    },
-                  };
-                  setPendingComments((previous) => [...previous, pending]);
-                  setDiscussionDraft(null);
-                  void savePendingComment(pending);
-                }}
+            {canEdit && !historical && composerOpen && (
+              <Modal
+                title="New discussion"
+                onClose={() => setComposerOpen(false)}
               >
-                <ErrorMessage
-                  message={discussionStorageError || popoverStorageError}
-                />
-                {discussionDraft &&
-                  discussionDraft.revisionId !== displayed.id && (
-                    <p className="panel-note">
-                      This draft belongs to revision{' '}
-                      {discussionDraft.revisionNumber}. Posting keeps it
-                      attached to that revision.
-                    </p>
-                  )}
-                <label htmlFor="new-comment">Document discussion</label>
-                <textarea
-                  id="new-comment"
-                  value={discussionDraft?.body ?? ''}
-                  onChange={(e) =>
-                    setDiscussionDraft(
-                      e.target.value
-                        ? {
-                            body: e.target.value,
-                            revisionId:
-                              discussionDraft?.revisionId ?? displayed.id,
-                            revisionNumber:
-                              discussionDraft?.revisionNumber ??
-                              displayed.number,
-                          }
-                        : null,
-                    )
-                  }
-                  name="body"
-                  placeholder="What’s on your mind?"
-                  required
-                  maxLength={10000}
-                  rows={3}
-                />
-                <div>
-                  <span>Visible to your workspace</span>
-                  <button
-                    className="button primary small-button"
-                    disabled={busy}
-                  >
-                    <Send size={13} />
-                    Post
-                  </button>
-                </div>
-              </form>
+                <form
+                  className="new-comment"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const body = discussionDraft?.body ?? '';
+                    if (!body.trim()) return;
+                    const pending: PendingComment = {
+                      revisionNumber:
+                        discussionDraft?.revisionNumber ?? displayed.number,
+                      payload: {
+                        submissionId: crypto.randomUUID(),
+                        artifactId: id,
+                        body,
+                        revisionId: discussionDraft?.revisionId ?? displayed.id,
+                        kind: 'comment',
+                        quote: '',
+                        labelTip: null,
+                        images: [],
+                        diff: null,
+                      },
+                    };
+                    setPendingComments((previous) => [...previous, pending]);
+                    setDiscussionDraft(null);
+                    setComposerOpen(false);
+                    void savePendingComment(pending);
+                  }}
+                >
+                  <ErrorMessage
+                    message={discussionStorageError || popoverStorageError}
+                  />
+                  {discussionDraft &&
+                    discussionDraft.revisionId !== displayed.id && (
+                      <p className="panel-note">
+                        This draft belongs to revision{' '}
+                        {discussionDraft.revisionNumber}. Posting keeps it
+                        attached to that revision.
+                      </p>
+                    )}
+                  <label htmlFor="new-comment">Artifact discussion</label>
+                  <textarea
+                    id="new-comment"
+                    value={discussionDraft?.body ?? ''}
+                    onChange={(e) =>
+                      setDiscussionDraft(
+                        e.target.value
+                          ? {
+                              body: e.target.value,
+                              revisionId:
+                                discussionDraft?.revisionId ?? displayed.id,
+                              revisionNumber:
+                                discussionDraft?.revisionNumber ??
+                                displayed.number,
+                            }
+                          : null,
+                      )
+                    }
+                    name="body"
+                    placeholder="What’s on your mind?"
+                    required
+                    maxLength={10000}
+                    rows={3}
+                  />
+                  <div>
+                    <span>Visible to your workspace</span>
+                    <button
+                      className="button primary small-button"
+                      disabled={busy}
+                    >
+                      <Send size={13} />
+                      Post
+                    </button>
+                  </div>
+                </form>
+              </Modal>
             )}
             {!canEdit && (
               <div className="panel-note">You have view-only access.</div>
@@ -1495,9 +1564,17 @@ export function DocumentView({
         ) : (
           <>
             <div className="panel-heading">
-              <h2>Every step, preserved.</h2>
-              <p>Restore an earlier version without losing history.</p>
+              <div className="activity-heading">
+                <h2>Activity</h2>
+                <button
+                  className="text-button"
+                  onClick={() => setTab('comments')}
+                >
+                  Discussions
+                </button>
+              </div>
             </div>
+            <ReviewActivity doc={doc} revision={displayed} />
             <div className="revision-list">
               {revisions.map((r) => (
                 <button
@@ -1507,7 +1584,7 @@ export function DocumentView({
                     void action(async () =>
                       setVersion(
                         await api<Revision>(
-                          `/documents/${id}/revisions/${r.id}`,
+                          `/artifacts/${id}/revisions/${r.id}`,
                         ),
                       ),
                     )
@@ -1536,7 +1613,89 @@ export function DocumentView({
             </div>
           </>
         )}
-      </aside>
+        <section className="review-context-summary" aria-label="This review">
+          <h3>This review</h3>
+          <dl>
+            <div>
+              <dt>Revision</dt>
+              <dd>r{displayed.number}</dd>
+            </div>
+            <div>
+              <dt>Your response</dt>
+              <dd>
+                {currentDecisions(doc.reviews, displayed.id).find(
+                  (r) => r.reviewerId === user.id,
+                )?.decision === 'approved'
+                  ? 'Approved'
+                  : currentDecisions(doc.reviews, displayed.id).find(
+                        (r) => r.reviewerId === user.id,
+                      )?.decision === 'changes_requested'
+                    ? 'Changes requested'
+                    : 'Pending'}
+              </dd>
+            </div>
+            <div>
+              <dt>Open discussions</dt>
+              <dd>{openCount}</dd>
+            </div>
+          </dl>
+          <ArtifactRequests
+            contextTarget={requestContextTarget}
+            artifactId={id}
+            user={user}
+            workspaceId={workspace.id}
+            revision={displayed}
+            onReadLatest={() => setVersion(null)}
+            currentRevisionId={doc.currentRevisionId}
+            canRequest={
+              canEdit &&
+              !changed &&
+              mode !== 'edit' &&
+              displayed.id === doc.currentRevisionId
+            }
+            refreshKey={doc.reviews.length}
+            onOpen={onOpenRequest}
+          />
+          <details className="feedback-disclosure">
+            <summary>Export feedback</summary>{' '}
+            <div className="feedback-actions">
+              <button
+                className="text-button"
+                disabled={busy}
+                onClick={() =>
+                  void action(async () => {
+                    const { markdown } = await api<{ markdown: string }>(
+                      `/artifacts/${id}/revisions/${displayed.id}/feedback`,
+                    );
+                    await navigator.clipboard.writeText(markdown);
+                    setFeedbackCopied(true);
+                    setTimeout(() => setFeedbackCopied(false), 2000);
+                  })
+                }
+              >
+                {feedbackCopied ? 'Feedback copied' : 'Copy review feedback'}
+              </button>
+              <button
+                className="text-button"
+                disabled={busy}
+                onClick={() =>
+                  void action(async () => {
+                    const { markdown } = await api<{ markdown: string }>(
+                      `/artifacts/${id}/revisions/${displayed.id}/feedback`,
+                    );
+                    download(
+                      `review-revision-${displayed.number}.md`,
+                      markdown,
+                    );
+                  })
+                }
+              >
+                Download feedback
+              </button>
+            </div>
+          </details>
+        </section>
+      </ReviewPanel>
     </div>
   );
 }
@@ -1580,13 +1739,14 @@ function CommentCard({
     body: string;
     version: number;
   } | null>(
-    `pw-annotation-draft:${userId}:${comment.documentId}:${comment.id}`,
+    `pw-annotation-draft:${userId}:${comment.artifactId}:${comment.id}`,
     null,
   );
   const [reply, setReply, replyStorageError] = useReviewDraft<string>(
-    `pw-reply-draft:${userId}:${comment.documentId}:${comment.id}`,
+    `pw-reply-draft:${userId}:${comment.artifactId}:${comment.id}`,
     '',
   );
+  const confirm = useConfirm();
   const [replying, setReplying] = useState(!!reply);
   const ref = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -1635,17 +1795,20 @@ function CommentCard({
           <blockquote>{attachment.quote}</blockquote>
         </div>
       )}
-      {comment.quote && (!comment.diff || attachment) && location && (
-        <span className="anchor-note">
-          {location === 'missing'
-            ? 'Unanchored — passage missing from this revision'
-            : location === 'moved'
-              ? 'Passage moved — found in a new location'
-              : older
-                ? 'Passage found in this revision'
-                : 'Passage found'}
-        </span>
-      )}
+      {comment.quote &&
+        (!comment.diff || attachment) &&
+        location &&
+        (location !== 'found' || older) && (
+          <span className="anchor-note">
+            {location === 'missing'
+              ? 'Unanchored — passage missing from this revision'
+              : location === 'moved'
+                ? 'Passage moved — found in a new location'
+                : older
+                  ? 'Passage found in this revision'
+                  : 'Passage found'}
+          </span>
+        )}
       {canEdit &&
         comment.canEdit &&
         !comment.resolved &&
@@ -1742,32 +1905,37 @@ function CommentCard({
       ))}
       {canEdit && (
         <div className="comment-actions">
-          {comment.canEdit && !editing && (
-            <button
-              className="text-button"
-              disabled={busy}
-              onClick={() =>
-                setEditing({ body: comment.body, version: comment.version })
-              }
-            >
-              Edit annotation
-            </button>
-          )}
-          {comment.canDelete && (
-            <button
-              className="text-button"
-              disabled={busy}
-              onClick={() => {
-                if (
-                  confirm(
-                    `Delete this discussion${comment.replies.length ? ` and its ${comment.replies.length} replies` : ''}? This cannot be undone.`,
-                  )
-                )
-                  onDelete();
-              }}
-            >
-              Delete discussion
-            </button>
+          {(comment.canEdit || comment.canDelete) && (
+            <ActionPopover label="Discussion actions">
+              {' '}
+              {comment.canEdit && !editing && (
+                <button
+                  className="text-button"
+                  disabled={busy}
+                  onClick={() =>
+                    setEditing({ body: comment.body, version: comment.version })
+                  }
+                >
+                  Edit annotation
+                </button>
+              )}
+              {comment.canDelete && (
+                <button
+                  className="text-button danger"
+                  disabled={busy}
+                  onClick={async () => {
+                    if (
+                      await confirm(
+                        `Delete this discussion${comment.replies.length ? ` and its ${comment.replies.length} replies` : ''}? This cannot be undone.`,
+                      )
+                    )
+                      onDelete();
+                  }}
+                >
+                  Delete discussion
+                </button>
+              )}
+            </ActionPopover>
           )}
           <button
             className="button small-button"

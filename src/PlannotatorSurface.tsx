@@ -1,12 +1,12 @@
+import { useTheme } from '@plannotator/ui/components/ThemeProvider';
 import { api } from './api';
-import { documentUrl } from './navigation';
+import { artifactUrl } from './navigation';
 import { useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { TableOfContents } from '@plannotator/ui/components/TableOfContents';
 import { useActiveSection } from '@plannotator/ui/hooks/useActiveSection';
 import { ScrollViewportProvider } from '@plannotator/ui/hooks/useScrollViewport';
 import { Viewer, type ViewerHandle } from '@plannotator/ui/components/Viewer';
-import { AnnotationToolstrip } from '@plannotator/ui/components/AnnotationToolstrip';
 import {
   MarkdownEditor,
   type MarkdownEditorHandle,
@@ -25,7 +25,7 @@ import type { Comment } from '../shared/types';
 
 export default function PlannotatorSurface({
   body,
-  documentId,
+  artifactId,
   mode,
   comments,
   selected,
@@ -47,7 +47,7 @@ export default function PlannotatorSurface({
   onTocNavigate,
 }: {
   body: string;
-  documentId: string;
+  artifactId: string;
   mode: 'read' | 'edit' | 'compare';
   comments: Comment[];
   selected: string | null;
@@ -68,6 +68,7 @@ export default function PlannotatorSurface({
   scrollViewport: HTMLElement | null;
   onTocNavigate: () => void;
 }) {
+  const { resolvedMode } = useTheme();
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const viewerRef = useRef<ViewerHandle | null>(null);
   const restoredIds = useRef(new Map<string, string>());
@@ -76,7 +77,7 @@ export default function PlannotatorSurface({
   useEffect(() => {
     if (mode !== 'read') return;
     let active = true;
-    const [id, revisionId] = documentId.split(':');
+    const [id, revisionId] = artifactId.split(':');
     const anchors = Array.from(
       contentRef.current?.querySelectorAll<HTMLAnchorElement>('a[href]') ?? [],
     );
@@ -102,12 +103,12 @@ export default function PlannotatorSurface({
           if (!url) {
             const target = await api<{
               workspaceId: string;
-              documentId: string;
+              artifactId: string;
               fragment: string;
             }>(
-              `/documents/${id}/resolve-link?${new URLSearchParams({ revisionId, href })}`,
+              `/artifacts/${id}/resolve-link?${new URLSearchParams({ revisionId, href })}`,
             );
-            url = documentUrl(target.workspaceId, target.documentId, {
+            url = artifactUrl(target.workspaceId, target.artifactId, {
               ...(target.fragment
                 ? { heading: decodeURIComponent(target.fragment) }
                 : {}),
@@ -125,7 +126,7 @@ export default function PlannotatorSurface({
     return () => {
       active = false;
     };
-  }, [body, documentId, mode]);
+  }, [body, artifactId, mode]);
   const headingCount = blocks.filter(
     (block) => block.type === 'heading' && (block.level ?? 1) <= 3,
   ).length;
@@ -191,12 +192,12 @@ export default function PlannotatorSurface({
     return (
       <MarkdownEditor
         markdown={body}
-        documentId={documentId}
+        documentId={artifactId}
         maxWidth={layout === 'wide' ? null : 832}
         editorHandleRef={editorRef}
         onMarkdownChange={onChange}
         onLinkClick={onLink}
-        mode="light"
+        mode={resolvedMode}
       />
     );
   if (mode === 'compare')
@@ -204,8 +205,8 @@ export default function PlannotatorSurface({
       <MarkdownDiff
         originalMarkdown={compareBody ?? ''}
         modifiedMarkdown={body}
-        documentId={documentId}
-        mode="light"
+        documentId={artifactId}
+        mode={resolvedMode}
       />
     );
   return (
@@ -246,33 +247,10 @@ export default function PlannotatorSurface({
               />
             </ScrollViewportProvider>
           ) : (
-            <p className="muted small">No headings in this document.</p>
+            <p className="muted small">No headings in this artifact.</p>
           ),
           tocTarget,
         )}
-      {!readOnly && (
-        <div
-          className="annotation-controls"
-          role="region"
-          aria-label="Review tools"
-        >
-          <AnnotationToolstrip
-            inputMethod={inputMethod}
-            onInputMethodChange={onInputMethodChange}
-            mode={reviewMode}
-            onModeChange={onReviewModeChange}
-            showHelpLink={false}
-          />
-          <p>
-            {inputMethod === 'pinpoint'
-              ? 'Hover over a passage, then click to review it.'
-              : 'Select text to review a passage.'}
-            {reviewMode === 'redline' &&
-              ' Redlines suggest a deletion; they do not edit the document.'}
-          </p>
-        </div>
-      )}
-
       <Viewer
         ref={viewerRef}
         markdown={body}
@@ -281,6 +259,10 @@ export default function PlannotatorSurface({
         annotations={annotations}
         mode={reviewMode}
         inputMethod={inputMethod}
+        annotationHeader={{
+          onInputMethodChange,
+          onModeChange: onReviewModeChange,
+        }}
         taterMode={false}
         readOnly={readOnly}
         quickLabels
@@ -294,7 +276,7 @@ export default function PlannotatorSurface({
         onOpenLinkedDoc={onLink}
         onRestoreReport={onRestoreReport}
         selectionActions={selectionActions}
-        copyLabel="Copy document"
+        copyLabel="Copy artifact"
         disableCodePathValidation
       />
     </div>

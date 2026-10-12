@@ -1,3 +1,7 @@
+import { signOut } from './controls';
+import { readingWidth } from './controls';
+import { openSettings, startDiscussion } from './controls';
+import { choose } from './controls';
 import { test, expect, type Page } from '@playwright/test';
 
 test.use({ actionTimeout: 15_000 });
@@ -9,7 +13,7 @@ async function replaceMarkdown(page: Page, text: string) {
   await editor.fill(text);
 }
 
-test('two people create, review, edit, handle conflicts and restore a shared document', async ({
+test('two people create, review, edit, handle conflicts and restore a shared artifact', async ({
   browser,
   page,
 }) => {
@@ -22,36 +26,37 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
   await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Create your workspace' }).click();
   await expect(
-    page.getByRole('heading', { name: 'My workspace.' }),
+    page.getByRole('heading', { name: 'My workspace' }),
   ).toBeVisible();
   await page
-    .getByRole('button', { name: 'New document', exact: true })
+    .getByRole('button', { name: 'New artifact', exact: true })
     .last()
     .click();
-  await page.getByLabel('Document path').fill('plans/release.md');
+  await page.getByLabel('Artifact name').fill('release');
   await page
     .getByLabel('Starting content')
     .fill(
       '# Release plan\n\nShip a useful workspace for people and agents.\n\n## Success criteria\n\nKeep every revision and make discussions durable.\n\n## Model\n\nThe cost is $x^2$.\n\n```mermaid\nflowchart LR\n  A[Start] --> B[Finish]\n```',
     );
   await page
-    .getByRole('button', { name: 'Create document', exact: true })
+    .getByRole('button', { name: 'Create artifact', exact: true })
     .click();
   await expect(
     page.getByRole('heading', { name: 'Release plan', exact: true }),
   ).toBeVisible();
-  const documentUrl = page.url();
+  const artifactUrl = page.url();
+  await startDiscussion(page);
   await page
-    .getByLabel('Document discussion')
+    .getByLabel('Artifact discussion')
     .fill('Let’s verify persistence before launch.');
   await page.getByRole('button', { name: 'Post', exact: true }).click();
   await expect(
     page.getByText('Let’s verify persistence before launch.'),
   ).toBeVisible();
-  await page.getByRole('button', { name: 'Members', exact: true }).click();
+  await openSettings(page, 'Members');
   await page.getByRole('button', { name: 'Create invite link' }).click();
   const invitation = await page.getByLabel('Invitation link').inputValue();
-  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await page.getByRole('button', { name: '← Back to workspace' }).click();
   const other = await browser.newContext();
   const teammate = await other.newPage();
   teammate.on('pageerror', (e) => errors.push(e.message));
@@ -61,9 +66,9 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
   await teammate.getByLabel('Password', { exact: true }).fill(password);
   await teammate.getByRole('button', { name: 'Create account & join' }).click();
   await expect(
-    teammate.getByRole('heading', { name: 'My workspace.' }),
+    teammate.getByRole('heading', { name: 'My workspace' }),
   ).toBeVisible();
-  await teammate.goto(documentUrl);
+  await teammate.goto(artifactUrl);
   await expect(
     teammate.getByText('Let’s verify persistence before launch.'),
   ).toBeVisible();
@@ -78,7 +83,7 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
     page.getByText('I’ll check recovery after restart.'),
   ).toBeVisible({ timeout: 12_000 });
   await page.getByRole('button', { name: 'Resolve discussion' }).click();
-  await page.getByLabel('Show resolved').check();
+  await page.getByRole('button', { name: 'All activity', exact: true }).click();
   await expect(page.getByText('Resolved', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Reopen discussion' }).click();
   await page
@@ -100,20 +105,20 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
   ).toBeVisible();
   await page.reload();
   await expect(
-    page.locator('.document-surface mark').filter({
+    page.locator('.artifact-surface mark').filter({
       hasText: 'Ship a useful workspace for people and agents.',
     }),
   ).toBeVisible();
   // Human reviews are shared and belong to the exact saved revision.
-  await page.getByRole('button', { name: 'Review this revision' }).click();
+  await page.getByRole('button', { name: 'Finish review' }).click();
   await page
     .getByLabel('Review note (optional)')
     .fill('Ready for implementation.');
   await page.getByRole('button', { name: 'Approve', exact: true }).click();
   await expect(
-    teammate.getByRole('region', { name: 'Document review' }),
+    teammate.getByRole('region', { name: 'Artifact review' }),
   ).toContainText('Approved', { timeout: 12_000 });
-  await teammate.getByRole('button', { name: 'Review this revision' }).click();
+  await teammate.getByRole('button', { name: 'Finish review' }).click();
   await teammate
     .getByLabel('Review note (optional)')
     .fill('Please check recovery.');
@@ -121,12 +126,12 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
     .getByRole('button', { name: 'Request changes', exact: true })
     .click();
   await expect(
-    page.getByRole('region', { name: 'Document review' }),
+    page.getByRole('region', { name: 'Artifact review' }),
   ).toContainText('Changes requested', { timeout: 12_000 });
   await teammate.getByRole('button', { name: 'Update your review' }).click();
   await teammate.getByRole('button', { name: 'Withdraw review' }).click();
   await expect(
-    page.getByRole('region', { name: 'Document review' }),
+    page.getByRole('region', { name: 'Artifact review' }),
   ).toContainText('Approved', { timeout: 12_000 });
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await teammate.getByRole('button', { name: 'Edit', exact: true }).click();
@@ -140,7 +145,7 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
     page.getByText('Owner has saved the launch criteria.'),
   ).toBeVisible();
   await expect(
-    page.getByRole('region', { name: 'Document review' }),
+    page.getByRole('region', { name: 'Artifact review' }),
   ).toContainText('Changes since approval');
   await expect(
     page.getByText('Unanchored — passage missing from this revision'),
@@ -167,7 +172,7 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
   await teammate
     .getByRole('button', { name: 'Compare with latest', exact: true })
     .click();
-  await expect(teammate.locator('.document-surface')).toContainText(
+  await expect(teammate.locator('.artifact-surface')).toContainText(
     'the launch criteria',
   );
   await teammate.getByRole('button', { name: 'Use latest as base' }).click();
@@ -183,18 +188,18 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
   await expect(
     page.getByText('Owner launch criteria plus Sam’s recovery checks.'),
   ).toBeVisible();
-  await page.getByRole('button', { name: 'History', exact: true }).click();
+  await page.getByRole('button', { name: 'Activity', exact: true }).click();
   await page.getByRole('button', { name: /Revision 1/ }).click();
   await expect(
     page.getByText('Viewing revision 1', { exact: false }),
   ).toBeVisible();
   await expect(
     page
-      .locator('.document-surface mark')
+      .locator('.artifact-surface mark')
       .filter({ hasText: 'Ship a useful workspace' }),
   ).toBeVisible();
   await page
-    .locator('.document-surface mark')
+    .locator('.artifact-surface mark')
     .filter({ hasText: 'Ship a useful workspace' })
     .click();
   await expect(page.locator('.comment-card.selected')).toContainText(
@@ -204,19 +209,25 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
     page.getByPlaceholder('Add a comment...', { exact: true }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole('region', { name: 'Document review' }),
+    page.getByRole('region', { name: 'Artifact review' }),
   ).toContainText('Approved');
-  page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Restore', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: 'Confirm action' })
+    .getByRole('button', { name: 'Confirm', exact: true })
+    .click();
   await expect(
     page
-      .locator('.document-surface')
+      .locator('.artifact-surface')
       .getByText('Ship a useful workspace for people and agents.'),
   ).toBeVisible();
-  await page.getByRole('button', { name: 'History', exact: true }).click();
+  await page.getByRole('button', { name: 'Activity', exact: true }).click();
   await expect(page.getByRole('button', { name: /Revision 4/ })).toBeVisible();
-  await page.getByRole('button', { name: /^Discussion/ }).click();
-  const reviewTools = page.getByRole('region', { name: 'Review tools' });
+  await page
+    .locator('.reading-controls')
+    .getByRole('button', { name: /^Discussion/ })
+    .click();
+  const reviewTools = page.locator('[data-viewer-annotation-controls]');
   await reviewTools
     .getByRole('button', { name: 'Pinpoint', exact: true })
     .click();
@@ -224,7 +235,7 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
     .getByRole('button', { name: 'Markup', exact: true })
     .click();
   const criteria = page
-    .locator('.document-surface')
+    .locator('.artifact-surface')
     .getByText('Keep every revision and make discussions durable.', {
       exact: true,
     });
@@ -242,7 +253,7 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
     .evaluate((button) => getComputedStyle(button, '::after').content);
   expect(saveHint).toContain('Enter');
   await page.getByRole('button', { name: 'Attachments', exact: true }).click();
-  const picture = await page.locator('.document-surface').screenshot();
+  const picture = await page.locator('.artifact-surface').screenshot();
   await page.locator('input[type="file"]').setInputFiles({
     name: 'review-evidence.png',
     mimeType: 'image/png',
@@ -265,7 +276,7 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
     .getByRole('button', { name: 'Redline', exact: true })
     .click();
   await page
-    .locator('.document-surface')
+    .locator('.artifact-surface')
     .getByRole('heading', { name: 'Success criteria' })
     .click();
   await expect(
@@ -276,7 +287,7 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
     .click();
   await reviewTools.getByRole('button', { name: 'Label', exact: true }).click();
   await page
-    .locator('.document-surface')
+    .locator('.artifact-surface')
     .getByRole('heading', { name: 'Release plan', exact: true })
     .click({ clickCount: 3 });
   await page.getByRole('button', { name: /Verify this/ }).click();
@@ -286,7 +297,7 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
   await page.reload();
   await expect(
     page
-      .locator('.document-surface mark.deletion')
+      .locator('.artifact-surface mark.deletion')
       .filter({ hasText: 'Success criteria' }),
   ).toBeVisible();
   await expect(
@@ -303,10 +314,11 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
   });
   await expect(resolveEvidence).toHaveText('Resolve discussion');
   await resolveEvidence.click();
-  await page.getByLabel('Show resolved').check();
+  await page.getByRole('button', { name: 'All activity', exact: true }).click();
   await expect(evidence.getByText('Resolved', { exact: true })).toBeVisible();
   await evidence.getByRole('button', { name: 'Reopen discussion' }).click();
-  await evidence
+  await evidence.getByRole('button', { name: 'Discussion actions' }).click();
+  await page
     .getByRole('button', { name: 'Edit annotation', exact: true })
     .click();
   await evidence
@@ -328,6 +340,7 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
       .getByRole('button', { name: 'Edit annotation' }),
   ).toHaveCount(0);
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.locator('.feedback-disclosure > summary').click();
   await page.getByRole('button', { name: 'Copy review feedback' }).click();
   await expect(
     page.getByRole('button', { name: 'Feedback copied' }),
@@ -347,9 +360,13 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
   expect(feedback).toContain('Updated evidence after team review.');
   expect(feedback).toContain('Changes since approval');
   expect(feedback).toContain('review-evidence');
-  page.once('dialog', (dialog) => dialog.accept());
   await updatedEvidence
-    .getByRole('button', { name: 'Delete discussion' })
+    .getByRole('button', { name: 'Discussion actions' })
+    .click();
+  await page.getByRole('button', { name: 'Delete discussion' }).click();
+  await page
+    .getByRole('dialog', { name: 'Confirm action' })
+    .getByRole('button', { name: 'Confirm', exact: true })
     .click();
   await expect(updatedEvidence).toHaveCount(0);
   await expect(
@@ -360,13 +377,13 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
   await reviewTools
     .getByRole('button', { name: 'Comment', exact: true })
     .click();
-  await page.locator('.document-surface .math-annotatable').first().click();
+  await page.locator('.artifact-surface .math-annotatable').first().click();
   await page
     .getByPlaceholder('Add a comment...', { exact: true })
     .fill('Check the cost formula.');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   const node = page
-    .locator('.document-surface svg .node')
+    .locator('.artifact-surface svg .node')
     .filter({ hasText: 'Start' });
   await node.click();
   await page
@@ -378,36 +395,40 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
     .click();
   await page.reload();
   await expect(
-    page.locator('.document-surface [data-math-annotation="true"]'),
+    page.locator('.artifact-surface [data-math-annotation="true"]'),
   ).toBeVisible();
   await expect(
     page.getByRole('button', { name: /Comment 1: Start/ }),
   ).toBeVisible();
-  await page.getByRole('button', { name: 'History', exact: true }).click();
+  await page.getByRole('button', { name: 'Activity', exact: true }).click();
   await page.getByRole('button', { name: /Revision 4/ }).click();
   await expect(
-    page.locator('.document-surface [data-math-annotation="true"]'),
+    page.locator('.artifact-surface [data-math-annotation="true"]'),
   ).toBeVisible();
   await expect(
     page.getByRole('button', { name: /Comment 1: Start/ }),
   ).toBeVisible();
   await page.getByRole('button', { name: 'Back to latest' }).click();
-  await page.getByRole('button', { name: /^Discussion/ }).click();
+  await page
+    .locator('.reading-controls')
+    .getByRole('button', { name: /^Discussion/ })
+    .click();
   // Reading layout, navigation, and personal presets survive reload and account switches.
   const reading = page.getByRole('region', { name: 'Reading controls' });
-  await reading.getByRole('button', { name: 'Wide', exact: true }).click();
-  await expect(page.locator('.sidebar')).toHaveCount(0);
-  await expect(page.locator('.review-panel')).toBeHidden();
-  const wideWidth = (await page.locator('.document-surface').boundingBox())!
+  await readingWidth(page, 'Wide');
+  await expect(page.locator('.sidebar')).toBeVisible();
+  await expect(page.locator('.review-panel')).toBeVisible();
+  const wideWidth = (await page.locator('.artifact-surface').boundingBox())!
     .width;
   await reading.getByRole('button', { name: 'Focus', exact: true }).click();
   expect(
-    (await page.locator('.document-surface').boundingBox())!.width,
-  ).toBeLessThan(wideWidth);
+    (await page.locator('.artifact-surface').boundingBox())!.width,
+  ).toBeLessThanOrEqual(832);
   await page.reload();
   await expect(
-    reading.getByRole('button', { name: 'Focus', exact: true }),
+    reading.getByRole('button', { name: 'Exit focus', exact: true }),
   ).toHaveAttribute('aria-pressed', 'true');
+  await page.setViewportSize({ width: 1440, height: 700 });
   await reading.getByRole('button', { name: 'Contents', exact: true }).click();
   const contents = page.getByRole('navigation', { name: 'Table of contents' });
   await expect(
@@ -416,16 +437,20 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
   await contents.getByRole('button', { name: /Model/ }).click();
   await expect(
     page
-      .locator('.document-surface')
+      .locator('.artifact-surface')
       .getByRole('heading', { name: 'Model', exact: true }),
   ).toBeInViewport();
   await expect
-    .poll(() => page.locator('.document-scroll').evaluate((el) => el.scrollTop))
+    .poll(() => page.locator('.artifact-scroll').evaluate((el) => el.scrollTop))
     .toBeGreaterThan(0);
-  await reading.getByRole('button', { name: 'Normal', exact: true }).click();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await readingWidth(page, 'Normal');
   await expect(page.locator('.sidebar')).toBeVisible();
   await expect(page.locator('.review-panel')).toBeVisible();
-  await reading.getByRole('button', { name: 'Custom labels' }).click();
+  await reading.getByRole('button', { name: 'Review options' }).click();
+  await page
+    .getByRole('button', { name: 'Custom labels', exact: true })
+    .click();
   const labels = page.getByRole('dialog', {
     name: 'Custom labels',
     exact: true,
@@ -459,7 +484,7 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
     .getByRole('button', { name: 'Pinpoint', exact: true })
     .click();
   await reviewTools.getByRole('button', { name: 'Label', exact: true }).click();
-  await page.getByLabel('Show resolved').check();
+  await page.getByRole('button', { name: 'All activity', exact: true }).click();
   await page.reload();
   await expect(
     reviewTools.getByRole('button', { name: 'Pinpoint', exact: true }),
@@ -467,8 +492,13 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
   await expect(
     reviewTools.getByRole('button', { name: 'Label', exact: true }),
   ).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByLabel('Show resolved')).toBeChecked();
-  await reading.getByRole('button', { name: 'Custom labels' }).click();
+  await expect(
+    page.getByRole('button', { name: 'All activity', exact: true }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  await reading.getByRole('button', { name: 'Review options' }).click();
+  await page
+    .getByRole('button', { name: 'Custom labels', exact: true })
+    .click();
   await expect(
     labels.getByLabel('Label text, position 10', { exact: true }),
   ).toHaveValue('Check rollout');
@@ -479,7 +509,7 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
   await page.screenshot({ path: 'test-results/custom-labels.png' });
   await labels.getByRole('button', { name: 'Close dialog' }).click();
   await page
-    .locator('.document-surface')
+    .locator('.artifact-surface')
     .getByRole('heading', { name: 'Model', exact: true })
     .click();
   await page.getByRole('button', { name: /Check rollout/ }).click();
@@ -491,43 +521,48 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
   ).toContainText('Verify the rollback procedure before release.', {
     timeout: 12_000,
   });
-  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await signOut(page);
   await page.getByLabel('Email address').fill('sam@example.test');
   await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(
-    page.getByRole('button', { name: 'Sign out', exact: true }),
+    page.getByRole('button', { name: /^Account menu for / }),
   ).toBeVisible();
-  await page.goto(documentUrl);
+  await page.goto(artifactUrl);
   await expect(
     reviewTools.getByRole('button', { name: 'Comment', exact: true }),
   ).toHaveAttribute('aria-pressed', 'true');
   await expect(
     reviewTools.getByRole('button', { name: 'Select', exact: true }),
   ).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByLabel('Show resolved')).not.toBeChecked();
-  await reading.getByRole('button', { name: 'Custom labels' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Open', exact: true }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  await reading.getByRole('button', { name: 'Review options' }).click();
+  await page
+    .getByRole('button', { name: 'Custom labels', exact: true })
+    .click();
   await expect(
     labels.getByRole('textbox', { name: 'Emoji for Check rollout' }),
   ).toHaveCount(0);
   await labels.getByRole('button', { name: 'Close dialog' }).click();
-  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await signOut(page);
   await page.getByLabel('Email address').fill('alex@example.test');
   await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(
-    page.getByRole('button', { name: 'Sign out', exact: true }),
+    page.getByRole('button', { name: /^Account menu for / }),
   ).toBeVisible();
-  await page.goto(documentUrl);
+  await page.goto(artifactUrl);
   await expect(
     reviewTools.getByRole('button', { name: 'Label', exact: true }),
   ).toHaveAttribute('aria-pressed', 'true');
   // A viewer sees restored highlights but has no annotation or approval controls.
-  await page.getByRole('button', { name: 'Members', exact: true }).click();
-  await page.getByLabel('Invite someone as').selectOption('viewer');
+  await openSettings(page, 'Members');
+  await choose(page.getByLabel('Invite someone as'), 'Viewer — read only');
   await page.getByRole('button', { name: 'Create invite link' }).click();
   const viewerInvite = await page.getByLabel('Invitation link').inputValue();
-  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await page.getByRole('button', { name: '← Back to workspace' }).click();
   const viewerContext = await browser.newContext();
   const viewer = await viewerContext.newPage();
   viewer.on('pageerror', (e) => errors.push(e.message));
@@ -537,27 +572,27 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
   await viewer.getByLabel('Password', { exact: true }).fill(password);
   await viewer.getByRole('button', { name: 'Create account & join' }).click();
   await expect(
-    viewer.getByRole('heading', { name: 'My workspace.' }),
+    viewer.getByRole('heading', { name: 'My workspace' }),
   ).toBeVisible();
-  await viewer.goto(documentUrl);
+  await viewer.goto(artifactUrl);
   await expect(
     viewer
-      .locator('.document-surface mark')
+      .locator('.artifact-surface mark')
       .filter({ hasText: 'Ship a useful workspace' }),
   ).toBeVisible();
   await expect(
-    viewer.locator('.document-surface [data-math-annotation="true"]'),
+    viewer.locator('.artifact-surface [data-math-annotation="true"]'),
   ).toBeVisible();
   await expect(
     viewer.getByRole('button', { name: /Comment 1: Start/ }),
   ).toBeVisible();
+  await expect(viewer.locator('[data-viewer-annotation-controls]')).toHaveCount(
+    0,
+  );
   await expect(
-    viewer.getByRole('region', { name: 'Review tools' }),
+    viewer.getByRole('button', { name: 'Finish review' }),
   ).toHaveCount(0);
-  await expect(
-    viewer.getByRole('button', { name: 'Review this revision' }),
-  ).toHaveCount(0);
-  await viewer.locator('.document-surface .math-annotatable').first().click();
+  await viewer.locator('.artifact-surface .math-annotatable').first().click();
   await expect(
     viewer.getByPlaceholder('Add a comment...', { exact: true }),
   ).toHaveCount(0);
@@ -568,9 +603,8 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
   });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(
-    page.getByRole('button', { name: 'Collapse sidebar' }),
+    page.getByRole('button', { name: 'Expand sidebar' }),
   ).toBeVisible();
-  await page.getByRole('button', { name: 'Collapse sidebar' }).click();
   await expect(
     page.getByRole('heading', { name: 'Release plan', exact: true }),
   ).toBeVisible();
@@ -583,11 +617,11 @@ test('two people create, review, edit, handle conflicts and restore a shared doc
   await contents.getByRole('button', { name: /Model/ }).click();
   await expect(
     page
-      .locator('.document-surface')
+      .locator('.artifact-surface')
       .getByRole('heading', { name: 'Model', exact: true }),
   ).toBeInViewport();
   await expect
-    .poll(() => page.locator('.document-layout').evaluate((el) => el.scrollTop))
+    .poll(() => page.locator('.artifact-layout').evaluate((el) => el.scrollTop))
     .toBeGreaterThan(0);
   await page.screenshot({
     path: 'test-results/workspace-mobile.png',

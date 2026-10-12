@@ -20,13 +20,13 @@ Pull requests and pushes to `main` run:
 
 The release workflow reruns verification for the tag, then publishes the exact container tested by Compose and Kubernetes. It does not rebuild the image after those checks. Third-party Actions are pinned to commits; the runtime base image is pinned to a digest. Dependency updates arrive through Dependabot, except the deliberately pinned Plannotator integration, which requires manual compatibility review.
 
-For a schema change, add meaningful migration coverage using retained data from the previous supported schema. The first release covers the existing schema 10 to 11 transition. Future release upgrades should also be rehearsed with the previous published image and a representative disposable backup.
+For a schema change, add meaningful migration coverage using retained data from the previous supported schema. The integration suite covers the schema 11 to 12 transition with retained artifacts, archived paths, discussions, review decisions, aliases and comment retry receipts. Rehearse each schema upgrade with the previous release and a representative disposable backup, and verify a post-upgrade backup with the candidate. Retain the old release and pre-upgrade backup together.
 
 ## Prepare a release
 
 1. Update version metadata and user-facing changelog. Document configuration or schema changes and rollback requirements.
 2. Merge the reviewed source into `main` and wait for all verification jobs to pass.
-3. Tag the chosen commit, for example `git tag -a v0.1.0 -m 'Checkpoint 0.1.0'`, then push that tag.
+3. Tag the chosen commit, for example `git tag -a v0.2.0 -m 'Checkpoint 0.2.0'`, then push that tag.
 4. Wait for the Release workflow and inspect the published assets and image digest.
 5. Upgrade installations separately using the [operations guide](operations.md).
 

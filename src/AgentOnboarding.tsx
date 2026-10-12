@@ -1,3 +1,4 @@
+import { Select } from './Select';
 import { useEffect, useState } from 'react';
 import type {
   AgentConnection,
@@ -91,8 +92,10 @@ export function AgentConnectionSetup({
     }
   }
   return (
-    <section className="agent-onboarding">
-      <h3>Connection setup</h3>
+    <section className="setup-card agent-onboarding">
+      <h3>
+        <span className="step-number">2</span>Connect your client
+      </h3>
       <p className="small muted">
         Streamable HTTP MCP configuration for clients that accept mcpServers
         JSON. This configuration includes your secret when a key is entered;
@@ -109,7 +112,7 @@ export function AgentConnectionSetup({
             setResult(null);
             setCopied(false);
           }}
-          placeholder="Paste an existing key or create one below"
+          placeholder="Paste an existing key or create one above"
         />
       </label>
       <textarea
@@ -190,7 +193,7 @@ export function ServiceAccounts({
     }
   }
   return (
-    <section className="agent-onboarding">
+    <section className="setup-card service-accounts">
       <h3>Workspace service accounts</h3>
       <p className="small muted">
         For unattended automation. Workspace owners and organization
@@ -222,10 +225,10 @@ export function ServiceAccounts({
         </label>
         <label>
           Maximum access
-          <select name="scope">
+          <Select name="scope">
             <option value="read">Read only</option>
             <option value="write">Read, edit, and comment</option>
-          </select>
+          </Select>
         </label>
         <button className="button" disabled={busy}>
           Create service account
@@ -273,12 +276,12 @@ export function ServiceAccounts({
                 </label>
                 <label>
                   Key access
-                  <select name="scope">
+                  <Select name="scope">
                     <option value="read">Read only</option>
                     {a.scope === 'write' && (
                       <option value="write">Read, edit, and comment</option>
                     )}
-                  </select>
+                  </Select>
                 </label>
                 <button className="button" disabled={busy}>
                   Create service key
@@ -313,7 +316,7 @@ export function ServiceAccounts({
                 <div>
                   <p>
                     Disable {a.name} and revoke every key immediately? Existing
-                    document history remains.
+                    artifact history remains.
                   </p>
                   <div className="button-row">
                     <button
