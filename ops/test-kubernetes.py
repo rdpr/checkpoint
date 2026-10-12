@@ -46,7 +46,7 @@ with tempfile.TemporaryDirectory(prefix='pw-kind-') as temporary:
         # Real restore through the documented maintenance pod after detaching the writer.
         k('scale','statefulset/checkpoint','--replicas=0')
         k('wait','--for=delete','pod/checkpoint-0','--timeout=120s')
-        manifest=(source/'deploy/kubernetes/restore-pod.example.yaml').read_text().replace('ghcr.io/rdpr/checkpoint:0.1.0',image)
+        manifest=(source/'deploy/kubernetes/restore-pod.example.yaml').read_text().replace('ghcr.io/rdpr/checkpoint:'+json.loads((source/'package.json').read_text())['version'],image)
         k('apply','-f','-',input=manifest)
         k('wait','--for=condition=Ready','pod/checkpoint-restore','--timeout=180s')
         k('exec','checkpoint-restore','--','python3','ops/container.py','restore',backup,'--confirm-restore')

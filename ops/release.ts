@@ -8,6 +8,32 @@ if (!['check', 'package'].includes(command))
   throw new Error('Use check or package.');
 if (!/^\d+\.\d+\.\d+$/.test(version))
   throw new Error('Use a stable semantic version.');
+const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
+if (lock.version !== version || lock.packages[''].version !== version)
+  throw new Error('Lockfile version must match package.json.');
+for (const file of [
+  'deploy/compose/compose.yaml',
+  'deploy/compose/.env.example',
+  'deploy/kubernetes/restore-pod.example.yaml',
+]) {
+  const images = [
+    ...readFileSync(file, 'utf8').matchAll(
+      /ghcr\.io\/rdpr\/checkpoint:([\d.]+)/g,
+    ),
+  ];
+  if (!images.length || images.some((match) => match[1] !== version))
+    throw new Error(`Default image in ${file} must match ${version}.`);
+}
+if (
+  !readFileSync('Dockerfile', 'utf8').includes(`ARG BUILD_VERSION=${version}\n`)
+)
+  throw new Error('Docker build version must match package.json.');
+if (
+  !readFileSync('deploy/kubernetes/values.yaml', 'utf8').includes(
+    `tag: '${version}'`,
+  )
+)
+  throw new Error('Helm default image tag must match package.json.');
 const chart = readFileSync('deploy/kubernetes/Chart.yaml', 'utf8');
 for (const key of ['version', 'appVersion']) {
   if (
