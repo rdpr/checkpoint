@@ -1,0 +1,49 @@
+/* Establish layer order before importing upstream CSS. App resets must not
+   override Plannotator's typography, controls, or annotation popovers. */
+@layer workspace-base, properties, theme, base, components, utilities, workspace;
+@layer workspace-base {
+  :root {
+    font-family: 'Inter Variable', Inter, sans-serif;
+    color: #28342f;
+    background: #fafbf8;
+    font-synthesis: none;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+  }
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+  button {
+    cursor: pointer;
+    background: none;
+    border: 0;
+  }
+  button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+  button,
+  a,
+  input,
+  textarea,
+  select {
+    -webkit-tap-highlight-color: transparent;
+  }
+  :focus-visible {
+    outline: 2px solid #639377;
+    outline-offset: 3px;
+  }
+  h1,
+  h2,
+  h3,
+  p {
+    margin: 0;
+  }
+}

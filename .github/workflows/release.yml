@@ -1,0 +1,71 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: checkpoint-release
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Require a version tag on main
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          test "$TAG" = "v$(node -p "require('./package.json').version")"
+          git merge-base --is-ancestor HEAD origin/main
+  verify:
+    needs: validate
+    uses: ./.github/workflows/verify.yml
+  publish:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.22.1
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: candidate-image
+      - run: docker load -i checkpoint-image.tar.gz
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112
+        with:
+          version: v3.20.0
+      - name: Publish tested image and release files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          IMAGE="ghcr.io/${REPOSITORY,,}"
+          if gh release view "$TAG" >/dev/null 2>&1; then echo "Release already exists; publish a new version." >&2; exit 1; fi
+          docker tag checkpoint:candidate "$IMAGE:$VERSION"
+          docker push "$IMAGE:$VERSION"
+          DIGEST=$(docker inspect "$IMAGE:$VERSION" --format '{{index .RepoDigests 0}}')
+          export RELEASE_IMAGE="$DIGEST"
+          npm run release:package
+          helm package deploy/kubernetes --destination release
+          docker run --rm --entrypoint npm "$IMAGE:$VERSION" sbom --omit=dev --sbom-format=cyclonedx > release/checkpoint-sbom.cdx.json
+          docker run --rm --entrypoint cat "$IMAGE:$VERSION" dist/THIRD_PARTY_LICENSES.txt > release/checkpoint-licenses.txt
+          (cd release && sha256sum -- * > SHA256SUMS)
+          gh release create "$TAG" release/* --verify-tag --title "Checkpoint $VERSION" --notes-file release/RELEASE_NOTES.md

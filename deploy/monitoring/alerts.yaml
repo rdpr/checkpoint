@@ -1,0 +1,33 @@
+groups:
+  - name: workspaces
+    rules:
+      - alert: WorkspacesUnavailable
+        expr: up{job="workspaces"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: 'Workspaces metrics cannot be reached or authenticated'}
+      - alert: WorkspacesDatabaseUnavailable
+        expr: workspaces_database_up == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations: {summary: 'Workspaces cannot read SQLite'}
+      - alert: WorkspacesBackupStale
+        expr: (time() - workspaces_backup_last_success_timestamp_seconds > 93600) or (workspaces_backup_last_attempt_success == 0) or (workspaces_operations_status_readable == 0)
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: 'Local backup is missing, failed, or older than 26 hours'}
+      - alert: WorkspacesDiskLow
+        expr: workspaces_disk_available_bytes < 1073741824
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: 'Less than 1 GiB available on the data volume'}
+      - alert: WorkspacesServerErrors
+        expr: sum(rate(workspaces_http_request_duration_seconds_count{status="5xx"}[5m])) > 0.1
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: 'Workspaces is returning sustained server errors'}
+      - alert: WorkspacesRestoreDrillOverdue
+        expr: time() - workspaces_restore_drill_last_success_timestamp_seconds > 2592000
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: 'No successful restore drill in the last 30 days'}

@@ -1,0 +1,48 @@
+name: checkpoint
+x-app: &app
+  image: ${CHECKPOINT_IMAGE:-ghcr.io/rdpr/checkpoint:0.1.0}
+  environment: &environment
+    APP_ORIGIN: ${APP_ORIGIN:?Set the public HTTPS origin}
+    AUTH_MODE: ${AUTH_MODE:-optional}
+    ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:-}
+    ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:-}
+    ENTRA_CLIENT_SECRET_FILE: /run/secrets/entra_client_secret
+    METRICS_TOKEN_FILE: /run/secrets/metrics_token
+  volumes:
+    - data:/data
+    - backups:/backups
+  secrets:
+    - entra_client_secret
+    - metrics_token
+  security_opt:
+    - no-new-privileges:true
+  cap_drop: [ALL]
+  read_only: true
+  tmpfs: [/tmp]
+services:
+  app:
+    <<: *app
+    restart: unless-stopped
+    ports: ["127.0.0.1:${APP_PORT:-4310}:4310"]
+    stop_grace_period: 20s
+  backup:
+    <<: *app
+    command: [backup-loop]
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      <<: *environment
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETENTION: ${BACKUP_RETENTION:-14}
+volumes:
+  data:
+  backups:
+secrets:
+  entra_client_secret:
+    file: ${ENTRA_SECRET_FILE:-./secrets/entra_client_secret}
+  metrics_token:
+    file: ${METRICS_SECRET_FILE:-./secrets/metrics_token}

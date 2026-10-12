@@ -1,0 +1,150 @@
+{{- if not (has .Values.storage.accessMode (list "ReadWriteOncePod" "ReadWriteOnce")) }}{{ fail "Use single-writer block storage: ReadWriteOncePod or ReadWriteOnce" }}{{ end }}
+{{- if not (has .Values.authMode (list "optional" "entra")) }}{{ fail "authMode must be optional or entra" }}{{ end }}
+{{- if and (eq .Values.authMode "entra") (not .Values.entra.secretName) }}{{ fail "Enforced Entra requires an existing client secret" }}{{ end }}
+{{- if not (hasPrefix "https://" .Values.origin) }}{{ fail "origin must be an HTTPS origin" }}{{ end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+  labels: {monitoring: {{ .Release.Name }}}
+spec:
+  selector: {app: {{ .Release.Name }}}
+  ports: [{name: http, port: 4310, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  serviceName: {{ .Release.Name }}
+  replicas: 1
+  selector:
+    matchLabels: {app: {{ .Release.Name }}}
+  template:
+    metadata:
+      labels: {app: {{ .Release.Name }}}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: app
+          image: {{ if .Values.image.digest }}{{ printf "%s@%s" .Values.image.repository .Values.image.digest | quote }}{{ else }}{{ printf "%s:%s" .Values.image.repository (required "image.tag is required" .Values.image.tag | toString) | quote }}{{ end }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports: [{name: http, containerPort: 4310}]
+          env: &environment
+            - {name: APP_ORIGIN, value: {{ required "origin is required" .Values.origin | quote }}}
+            - {name: AUTH_MODE, value: {{ .Values.authMode | quote }}}
+            {{- if .Values.entra.secretName }}
+            - {name: ENTRA_TENANT_ID, value: {{ required "entra.tenantId required" .Values.entra.tenantId | quote }}}
+            - {name: ENTRA_CLIENT_ID, value: {{ required "entra.clientId required" .Values.entra.clientId | quote }}}
+            - name: ENTRA_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.entra.secretName }}, key: client-secret}
+            {{- end }}
+            {{- if .Values.metrics.secretName }}
+            - name: METRICS_TOKEN
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.metrics.secretName }}, key: token}
+            {{- end }}
+          securityContext: &security
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts: &mounts
+            - {name: data, mountPath: /data}
+            - {name: backups, mountPath: /backups}
+            - {name: tmp, mountPath: /tmp}
+          # Startup upgrades run a real clone restore drill before migration.
+          startupProbe:
+            httpGet: {path: /livez, port: http}
+            failureThreshold: 120
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /livez, port: http}
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+        - name: backup
+          image: {{ if .Values.image.digest }}{{ printf "%s@%s" .Values.image.repository .Values.image.digest | quote }}{{ else }}{{ printf "%s:%s" .Values.image.repository (.Values.image.tag | toString) | quote }}{{ end }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: [backup-loop]
+          securityContext: *security
+          env:
+            - {name: BACKUP_INTERVAL_SECONDS, value: {{ .Values.backup.intervalSeconds | quote }}}
+            - {name: BACKUP_RETENTION, value: {{ .Values.backup.retention | quote }}}
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          volumeMounts: *mounts
+      volumes:
+        - {name: tmp, emptyDir: {sizeLimit: 256Mi}}
+  volumeClaimTemplates:
+    {{- range $kind, $size := dict "data" .Values.storage.dataSize "backups" .Values.storage.backupSize }}
+    - metadata:
+        name: {{ $kind }}
+      spec:
+        accessModes: [{{ $.Values.storage.accessMode }}]
+        {{- if $.Values.storage.className }}
+        storageClassName: {{ $.Values.storage.className | quote }}
+        {{- end }}
+        resources:
+          requests: {storage: {{ $size }}}
+    {{- end }}
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  tls:
+    - hosts: [{{ required "ingress.host required" .Values.ingress.host | quote }}]
+      secretName: {{ required "ingress.tlsSecretName required" .Values.ingress.tlsSecretName }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}
+                port: {name: http}
+{{- end }}
+{{- if .Values.metrics.serviceMonitor }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    {{- toYaml .Values.metrics.monitorLabels | nindent 4 }}
+spec:
+  selector:
+    matchLabels: {monitoring: {{ .Release.Name }}}
+  endpoints:
+    - port: http
+      interval: 30s
+      authorization:
+        type: Bearer
+        credentials:
+          name: {{ required "metrics.secretName required" .Values.metrics.secretName }}
+          key: token
+{{- end }}

@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.data/
+.env
+.env.*
+!.env.example
+*.sqlite*
+*.pem
+*.key
+test-results/
+playwright-report/
+release/
+__pycache__/
+deploy/compose/secrets/
+# Operator configuration stays outside version control.
+*.private.yaml
+
+*.private.json

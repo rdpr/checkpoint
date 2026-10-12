@@ -1,0 +1,5 @@
+# Example for a host Caddy reverse proxy. Replace the hostname.
+checkpoint.example.com {
+    reverse_proxy 127.0.0.1:4310
+}
+# On your tailnet, keep the existing Tailscale Serve proxy instead.

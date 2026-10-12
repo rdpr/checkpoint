@@ -1,0 +1,31 @@
+services:
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    command: [--config.file=/etc/prometheus/prometheus.yml, --storage.tsdb.path=/prometheus, --storage.tsdb.retention.time=15d]
+    group_add: ["1000"] # Read the shared token via its dedicated file group.
+    volumes:
+      - ../monitoring/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/alerts.yaml:/etc/prometheus/alerts.yml:ro
+      - prometheus:/prometheus
+    secrets: [metrics_token]
+    security_opt: [no-new-privileges:true]
+  grafana:
+    image: grafana/grafana:12.3.1
+    restart: unless-stopped
+    ports: ["127.0.0.1:${GRAFANA_PORT:-3000}:3000"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_password
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    secrets: [grafana_password]
+    volumes:
+      - grafana:/var/lib/grafana
+      - ../monitoring/provisioning:/etc/grafana/provisioning:ro
+      - ../monitoring/dashboard.json:/var/lib/grafana/dashboards/workspaces.json:ro
+    security_opt: [no-new-privileges:true]
+volumes:
+  prometheus:
+  grafana:
+secrets:
+  grafana_password:
+    file: ${GRAFANA_PASSWORD_FILE:-./secrets/grafana_password}

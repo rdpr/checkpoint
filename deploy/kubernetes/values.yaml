@@ -1,0 +1,32 @@
+image:
+  repository: ghcr.io/rdpr/checkpoint
+  tag: '0.1.0' # Select a release explicitly; prefer its published image digest.
+  digest: '' # sha256:... overrides tag when set.
+  pullPolicy: IfNotPresent
+imagePullSecrets: [] # Existing registry credentials, e.g. [{name: ghcr}].
+origin: '' # Required: externally accessible HTTPS origin.
+authMode: optional
+entra:
+  tenantId: ''
+  clientId: ''
+  secretName: '' # Existing Secret with client-secret key.
+metrics:
+  secretName: '' # Optional existing Secret with token key (at least 32 characters).
+  serviceMonitor: false # Requires Prometheus Operator CRDs.
+  monitorLabels: {}
+storage:
+  className: '' # Use CSI block storage. SQLite must not run on NFS/RWX.
+  accessMode: ReadWriteOncePod
+  dataSize: 10Gi
+  backupSize: 20Gi
+backup:
+  intervalSeconds: 86400
+  retention: 14
+resources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {memory: 1Gi}
+ingress:
+  enabled: false
+  className: ''
+  host: ''
+  tlsSecretName: ''

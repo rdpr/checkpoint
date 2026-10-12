@@ -1,0 +1,35 @@
+# Stop the StatefulSet first. Replace image and claim names with your installation's values.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: checkpoint-restore
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile: {type: RuntimeDefault}
+  containers:
+    - name: restore
+      image: ghcr.io/rdpr/checkpoint:0.1.0
+      command: [python3, -c, 'import time; time.sleep(86400)']
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: {drop: [ALL]}
+      resources:
+        requests: {cpu: 100m, memory: 256Mi}
+        limits: {memory: 1Gi}
+      volumeMounts:
+        - {name: data, mountPath: /data}
+        - {name: backups, mountPath: /backups}
+        - {name: tmp, mountPath: /tmp}
+  volumes:
+    - name: data
+      persistentVolumeClaim: {claimName: data-checkpoint-0}
+    - name: backups
+      persistentVolumeClaim: {claimName: backups-checkpoint-0}
+    - {name: tmp, emptyDir: {sizeLimit: 256Mi}}

@@ -1,0 +1,65 @@
+{
+  "name": "checkpoint",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.20.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web 'node --import tsx --watch server/index.ts' 'vite --host 127.0.0.1'",
+    "build": "vite build && node ops/licenses.mjs",
+    "start": "node --import tsx server/index.ts",
+    "check": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "test:browser": "playwright test",
+    "test:portable": "node --import tsx --test tests/portable.e2e.ts",
+    "test:containers": "python3 ops/test-container.py",
+    "test:kubernetes": "python3 ops/test-kubernetes.py",
+    "release:check": "node --import tsx ops/release.ts check",
+    "release:package": "node --import tsx ops/release.ts package"
+  },
+  "dependencies": {
+    "@fontsource-variable/geist-mono": "^5.2.0",
+    "@fontsource-variable/inter": "^5.2.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@plannotator/core": "0.25.12",
+    "@plannotator/ui": "0.52.1",
+    "@prometheus-io/client": "0.16.1",
+    "express": "^5.1.0",
+    "katex": "0.18.2",
+    "lucide-react": "^0.468.0",
+    "marked": "17.0.6",
+    "openid-client": "6.8.8",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "tailwindcss": "^4.1.18",
+    "tsx": "^4.23.15",
+    "zod": "^3.25.0"
+  },
+  "overrides": {
+    "lodash-es": "4.18.1",
+    "katex": "$katex"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.51.0",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.4.0",
+    "concurrently": "^9.1.0",
+    "typescript": "^5.8.0",
+    "vite": "^6.3.0"
+  },
+  "description": "Self-hosted Markdown workspaces for human and agent review.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rdpr/checkpoint.git"
+  },
+  "homepage": "https://github.com/rdpr/checkpoint",
+  "bugs": {
+    "url": "https://github.com/rdpr/checkpoint/issues"
+  }
+}
