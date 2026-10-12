@@ -1,3 +1,4 @@
+import { authenticate } from './controls';
 import { choose } from './controls';
 import { test, expect, type APIRequestContext } from '@playwright/test';
 
@@ -13,7 +14,7 @@ async function send(
   data: unknown,
   method = 'POST',
 ) {
-  const response = await request.fetch(`/api${path}`, {
+  const response = path.startsWith('/auth/') ? await authenticate(request, path, data) : await request.fetch(`/api${path}`, {
     method,
     headers: { Origin: origin },
     data,

@@ -1,20 +1,18 @@
 import { test, expect } from '@playwright/test';
-import { choose, manageArtifact } from './controls';
+import { authenticate, choose, manageArtifact } from './controls';
 
 test('people organize artifacts with persistent folders and keep old links working', async ({
   page,
 }) => {
   const origin = 'http://127.0.0.1:4411';
   const status = await (await page.request.get('/api/auth/status')).json();
-  const auth = await page.request.post(
-    `/api/auth/${status.needsSetup ? 'setup' : 'login'}`,
+  const auth = await authenticate(
+    page.request,
+    `/auth/${status.needsSetup ? 'setup' : 'login'}`,
     {
-      headers: { Origin: origin },
-      data: {
-        name: 'Alex Morgan',
-        email: 'alex@example.test',
-        password: 'browser-test-password-1234',
-      },
+      name: 'Alex Morgan',
+      email: 'alex@example.test',
+      password: 'browser-test-password-1234',
     },
   );
   expect(auth.ok(), await auth.text()).toBeTruthy();

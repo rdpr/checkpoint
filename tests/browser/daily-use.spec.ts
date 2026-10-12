@@ -1,3 +1,4 @@
+import { authenticate } from './controls';
 import { openSettings, manageArtifact } from './controls';
 import { choose } from './controls';
 import { test, expect, type APIRequestContext } from '@playwright/test';
@@ -18,7 +19,7 @@ test('people discover content across workspaces, manage its lifecycle, receive r
     path: string,
     data: unknown,
   ) => {
-    const r = await request.post('/api' + path, {
+    const r = path.startsWith('/auth/') ? await authenticate(request, path, data) : await request.post('/api' + path, {
       headers: { Origin: origin },
       data,
     });

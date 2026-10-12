@@ -1,3 +1,4 @@
+import { authenticate } from './controls';
 import { choose } from './controls';
 import {
   test,
@@ -35,7 +36,7 @@ test('agent and teammate request exact revisions, reviewers complete rounds, and
     path: string,
     data: unknown,
   ) => {
-    const response = await request.post(`/api${path}`, {
+    const response = path.startsWith('/auth/') ? await authenticate(request, path, data) : await request.post(`/api${path}`, {
       headers: { Origin: origin },
       data,
     });

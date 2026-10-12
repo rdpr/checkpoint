@@ -1,4 +1,35 @@
-import type { Locator, Page } from '@playwright/test';
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Locator,
+  type Page,
+} from '@playwright/test';
+
+// Independent sessions share the runner's loopback address. Honor the real
+// authentication limit when fast journeys exhaust its budget; never retry artifact writes.
+export async function authenticate(
+  request: APIRequestContext,
+  path: string,
+  data: unknown,
+) {
+  const send = () =>
+    request.post('/api' + path, {
+      headers: { Origin: 'http://127.0.0.1:4411' },
+      data,
+    });
+  let response = await send();
+  if (response.status() === 429) {
+    const seconds = Number(response.headers()['retry-after']);
+    expect(seconds).toBeGreaterThan(0);
+    expect(seconds).toBeLessThanOrEqual(60);
+    test.setTimeout(test.info().timeout + seconds * 1000 + 1000);
+    await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+    response = await send();
+  }
+  expect(response.ok(), await response.text()).toBeTruthy();
+  return response;
+}
 
 export async function choose(control: Locator, label: string) {
   await control.click();

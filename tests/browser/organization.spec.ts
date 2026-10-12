@@ -1,3 +1,4 @@
+import { authenticate } from './controls';
 import { openSettings, startDiscussion } from './controls';
 import { choose } from './controls';
 import { test, expect, type APIRequestContext } from '@playwright/test';
@@ -5,7 +6,7 @@ import { test, expect, type APIRequestContext } from '@playwright/test';
 const origin = 'http://127.0.0.1:4411';
 const password = 'browser-test-password-1234';
 async function send(request: APIRequestContext, path: string, data: unknown) {
-  const response = await request.post(`/api${path}`, {
+  const response = path.startsWith('/auth/') ? await authenticate(request, path, data) : await request.post(`/api${path}`, {
     headers: { Origin: origin },
     data,
   });

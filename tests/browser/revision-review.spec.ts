@@ -1,3 +1,4 @@
+import { authenticate } from './controls';
 import {
   test,
   expect,
@@ -20,7 +21,7 @@ test('review revisions without retargeting feedback, then reattach a missing pas
     path: string,
     data: unknown,
   ) => {
-    const response = await request.post(`/api${path}`, {
+    const response = path.startsWith('/auth/') ? await authenticate(request, path, data) : await request.post(`/api${path}`, {
       headers: { Origin: origin },
       data,
     });

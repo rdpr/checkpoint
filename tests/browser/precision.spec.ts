@@ -1,3 +1,4 @@
+import { authenticate } from './controls';
 import { readingWidth } from './controls';
 import { openSettings, startDiscussion, appearance } from './controls';
 import { test, expect } from '@playwright/test';
@@ -10,7 +11,7 @@ test('Precision keeps appearance, navigation and discussion context across devic
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   const send = async (path: string, data: unknown) => {
-    const response = await page.request.post('/api' + path, {
+    const response = path.startsWith('/auth/') ? await authenticate(page.request, path, data) : await page.request.post('/api' + path, {
       headers: { Origin: 'http://127.0.0.1:4411' },
       data,
     });
@@ -162,15 +163,12 @@ test('settings stay inside the viewport and sidebar actions give consistent feed
   page,
 }) => {
   const status = await (await page.request.get('/api/auth/status')).json();
-  const authentication = await page.request.post(
-    '/api' + (status.needsSetup ? '/auth/setup' : '/auth/login'),
+  const authentication = await authenticate(page.request,
+    status.needsSetup ? '/auth/setup' : '/auth/login',
     {
-      headers: { Origin: 'http://127.0.0.1:4411' },
-      data: {
-        name: 'Alex Morgan',
-        email: 'alex@example.test',
-        password: 'browser-test-password-1234',
-      },
+      name: 'Alex Morgan',
+      email: 'alex@example.test',
+      password: 'browser-test-password-1234',
     },
   );
   expect(authentication.ok(), await authentication.text()).toBeTruthy();

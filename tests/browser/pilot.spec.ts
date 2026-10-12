@@ -1,3 +1,4 @@
+import { authenticate } from './controls';
 import { startDiscussion } from './controls';
 import {
   test,
@@ -17,7 +18,7 @@ async function send(
   data: unknown,
   method = 'POST',
 ) {
-  const r = await request.fetch('/api' + path, {
+  const r = path.startsWith('/auth/') ? await authenticate(request, path, data) : await request.fetch('/api' + path, {
     method,
     headers: { Origin: origin },
     data,
