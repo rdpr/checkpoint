@@ -1,10 +1,26 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-10-12
 
-- New Checkpoint C-and-point identity throughout the app and README, with light/dark SVGs, transparent PNGs, favicons, and installation icons.
-- Browser installation with a standalone app window, a dismissible install suggestion, and platform guidance in Account settings.
+### Artifact review
+
+- Review self-contained HTML previews and standalone Mermaid or Graphviz diagrams through the UI and MCP, using Plannotator's existing viewers and annotation components.
+- Comment on HTML text and pinpoint elements, including multiple targets in one discussion. Switch between annotation and interaction to try preview controls. Markup opens the native selection toolbar for Comment, Copy, and Looks good; HTML does not offer redlines or other quick labels.
+- Import original UTF-8 files, edit their source, compare revisions, and follow revision-bound links between artifacts. Existing text/config imports remain reviewable as source code; the creation menu highlights formats with rendered previews.
+- Preserve validated HTML element anchors in saved discussions and feedback exports. Keep artifact rendering consistent across renames and history.
+- Improve dark-mode text-selection contrast in the review viewer, and keep HTML review controls usable on narrow screens.
+
+### Identity and onboarding
+
+- New Checkpoint identity throughout the app and README, with light/dark SVGs, transparent PNGs, favicons, and installation icons.
+- Browser installation with a standalone app window, a dismissible install suggestion where supported, and platform guidance in Account settings.
 - Engineering-focused onboarding and documentation, with a reproducible architecture review demo showing diagrams, decisions, and agent feedback.
+
+### Upgrading
+
+Database schema remains **12**. No migration is required from 0.2.0. Take and verify a backup before upgrading, then reload open browser tabs and refresh MCP tool discovery. HTML previews run scripts in an isolated iframe; use self-contained files because importing HTML does not upload its asset directory. Older releases do not provide the new artifact viewers.
+
+Upgrades from 0.1.0 still require the schema 11-to-12 migration described in the [operations guide](docs/operations.md#upgrading-from-010-to-020). Publication does not automatically upgrade installations.
 
 ## 0.2.0 — 2026-10-12
 

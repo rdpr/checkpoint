@@ -1,6 +1,6 @@
 image:
   repository: ghcr.io/rdpr/checkpoint
-  tag: '0.2.0' # Select a release explicitly; prefer its published image digest.
+  tag: '0.3.0' # Select a release explicitly; prefer its published image digest.
   digest: '' # sha256:... overrides tag when set.
   pullPolicy: IfNotPresent
 imagePullSecrets: [] # Existing registry credentials, e.g. [{name: ghcr}].

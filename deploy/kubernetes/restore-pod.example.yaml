@@ -14,7 +14,7 @@ spec:
     seccompProfile: {type: RuntimeDefault}
   containers:
     - name: restore
-      image: ghcr.io/rdpr/checkpoint:0.2.0
+      image: ghcr.io/rdpr/checkpoint:0.3.0
       command: [python3, -c, 'import time; time.sleep(86400)']
       securityContext:
         allowPrivilegeEscalation: false
