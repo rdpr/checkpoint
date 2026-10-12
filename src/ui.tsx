@@ -101,22 +101,9 @@ export function Loading({ label = 'Loading workspace…' }: { label?: string }) 
 }
 export function Brand() {
   return (
-    <div className="brand">
-      <span className="brand-mark">
-        <svg
-          viewBox="0 0 24 24"
-          width="21"
-          height="21"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-        >
-          <path d="m5 12 4 4L19 6" />
-        </svg>
-      </span>
-      <span>
-        Checkpoint<span className="brand-sub">v{version}</span>
-      </span>
+    <div className="brand" title={`Checkpoint v${version}`}>
+      <img className="brand-light" src="/brand/lockup-light.svg" alt="Checkpoint" width="190" height="40" />
+      <img className="brand-dark" src="/brand/lockup-dark.svg" alt="Checkpoint" width="190" height="40" />
     </div>
   );
 }

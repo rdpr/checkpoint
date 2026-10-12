@@ -42,17 +42,39 @@
     padding: 0 8px 28px;
     font-size: 20px;
   }
-  .brand-mark {
-    padding: 0;
-    width: 28px;
-    height: 28px;
-    border: 1.5px solid var(--cp-accent);
-    color: var(--cp-accent);
-    background: transparent;
-    border-radius: 7px;
+  .brand img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+  :root.light .brand-dark,
+  :root:not(.light) .brand-light {
+    display: none;
   }
   .brand-sub {
     display: none;
+  }
+  .install-suggestion {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--cp-border);
+    background: var(--cp-surface);
+    color: var(--cp-text);
+    font-size: 13px;
+  }
+  .install-suggestion > img { border-radius: 7px; }
+  .install-help { margin-block: 16px; }
+  .install-help summary { cursor: pointer; }
+  .install-help ul { padding-left: 24px; margin-block: 12px; }
+  .install-help li { margin-block: 8px; }
+  @media (max-width: 600px) {
+    .install-suggestion { gap: 8px; padding: 8px; }
+    .install-suggestion > span:not([role="alert"]) { display: none; }
+    .install-suggestion > .icon-button { margin-left: auto; }
   }
   .personal-navigation {
     display: grid;
@@ -1423,6 +1445,13 @@
   }
   .auth-message h1 {
     font-weight: 600;
+  }
+  .auth-message p {
+    max-width: 38ch;
+    margin-top: 24px;
+    color: var(--cp-muted);
+    font-size: 17px;
+    line-height: 1.65;
   }
   .auth-message h1 > span,
   .auth-features svg {

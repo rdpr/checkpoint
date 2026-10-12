@@ -37,3 +37,5 @@ Keep the lockfile committed. Test migrations through the real application entryp
 For UI changes, check light and dark themes, narrow screens, populated and empty states, and keyboard navigation. Keep the shared design tokens and controls consistent; preserve Plannotator's editor and diff components.
 
 Update operator documentation when changing configuration or deployment behavior. Do not commit credentials, databases, generated builds or local planning files. See [release engineering](docs/releases.md) for the publishing process.
+
+Product examples should show concrete engineering work: specs, architecture tradeoffs, API contracts, failure cases, and review decisions. Keep capability claims tied to implemented behavior. The [brand and demo guide](docs/branding.md) covers logo exports and reproducible screenshots.

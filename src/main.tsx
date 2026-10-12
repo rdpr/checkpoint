@@ -12,6 +12,7 @@ import './style.css';
 import './theme.css';
 import './precision.css';
 import { App } from './App';
+import { AppMetadata, InstallSuggestion } from './InstallApp';
 import { identityProvider } from './identity';
 import { reviewStorageBackend } from './reviewPreferences';
 import { modKey } from '@plannotator/ui/utils/platform';
@@ -84,6 +85,8 @@ createRoot(document.getElementById('root')!).render(
       colorThemeStorageKey="pw-palette"
     >
       <ConfirmationProvider>
+        <AppMetadata />
+        <InstallSuggestion />
         <App />
       </ConfirmationProvider>
     </ThemeProvider>

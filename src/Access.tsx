@@ -94,7 +94,13 @@ export function Access({
       }
       onClose={onClose}
     >
-
+      {kind === 'agents' && (
+        <p className="muted">
+          Let an agent publish a design, request your review, and use the
+          feedback to revise. Keys are scoped to this workspace; review
+          decisions belong to people.
+        </p>
+      )}
       <ErrorMessage message={error} />
       {error && (
         <button

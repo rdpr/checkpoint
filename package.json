@@ -54,7 +54,7 @@
     "typescript": "^5.8.0",
     "vite": "^6.3.0"
   },
-  "description": "Self-hosted Markdown workspaces for human and agent review.",
+  "description": "Review specs, designs, and agent work with your engineering team.",
   "repository": {
     "type": "git",
     "url": "https://github.com/rdpr/checkpoint.git"

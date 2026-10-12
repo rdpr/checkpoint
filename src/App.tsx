@@ -887,7 +887,7 @@ function WorkspaceApp({
                     workspace?.name ??
                     'Your work starts here'}
                 </h1>
-                {!workspace && <p>Create a workspace to start sharing artifacts.</p>}
+                {!workspace && <p>Create a workspace for your team’s specs and design reviews.</p>}
               </div>
               {workspace ? (
                 workspace.role !== 'viewer' && (
@@ -1052,7 +1052,7 @@ function WorkspaceApp({
                       <FileText size={32} strokeWidth={1.2} />
                       <h3>No artifacts yet.</h3>
                       <p>
-                        {workspace.role === 'viewer' ? 'An editor can add artifacts here.' : 'Use New artifact to add one here.'}
+                        {workspace.role === 'viewer' ? 'An editor can add artifacts here.' : 'Add a design spec, API proposal, or rollout plan to review with your team.'}
                       </p>
                     </div>
                   )}
@@ -1100,7 +1100,7 @@ function WorkspaceApp({
                     autoFocus
                     maxLength={120}
                     pattern="[^/\\\\]+"
-                    placeholder="e.g. Rollout proposal"
+                    placeholder="e.g. Webhook delivery design"
                     value={artifactName}
                     onChange={(e) => setArtifactName(e.target.value)}
                   />
@@ -1115,7 +1115,7 @@ function WorkspaceApp({
                   <textarea
                     name="body"
                     placeholder={
-                      '# The next great idea\n\nWhat are we trying to achieve?'
+                      '# Design spec\n\n## Context\nWhat problem are we solving?\n\n## Proposed design\nDescribe the approach and tradeoffs.\n\n## Open decisions\nWhat needs review before implementation?'
                     }
                     rows={7}
                     maxLength={1000000}

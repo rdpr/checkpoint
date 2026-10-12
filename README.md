@@ -1,25 +1,31 @@
-# Checkpoint
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="public/brand/lockup-dark.svg">
+  <img src="public/brand/lockup-light.svg" alt="Checkpoint" width="380">
+</picture>
 
-**A shared place to review plans before they become work.**
+**Agent work. Engineering judgment.**
 
-Checkpoint is a self-hosted Markdown workspace for teams and coding agents. Write a proposal, leave feedback on specific passages, compare revisions, and record a human decision against the exact version reviewed.
+Checkpoint is a self-hosted review workspace for engineering teams and coding agents. Bring design specs, architecture proposals, and implementation plans into a shared conversation. Review the tradeoffs, give precise feedback, and record a decision on the exact version an agent should work from.
 
 [![Verify](https://github.com/rdpr/checkpoint/actions/workflows/verify.yml/badge.svg)](https://github.com/rdpr/checkpoint/actions/workflows/verify.yml)
 [![Release](https://img.shields.io/github/v/release/rdpr/checkpoint)](https://github.com/rdpr/checkpoint/releases)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-![Checkpoint artifact review](docs/images/checkpoint.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/checkpoint-dark.png">
+  <img src="docs/images/checkpoint.png" alt="Reviewing a webhook delivery architecture spec, with a system diagram, design decisions, and feedback on retry safety.">
+</picture>
 
 ## What you can do
 
-- **Choose your reading environment.** Light, dark, or system appearance; independent reading width and discussions; a focused mobile review drawer. Personal review settings stay in your browser.
-- **Review precisely.** Select text or pinpoint an element to comment, suggest a deletion, or apply a custom label. Attach images, reply, and resolve discussions.
-- **Keep decisions tied to evidence.** Approvals, requested changes, and review requests belong to a saved revision. New edits never inherit an old approval.
-- **Understand what changed.** Compare revisions using rendered or source diffs, retain discussion provenance, and restore earlier content as a new revision.
-- **Work together safely.** Explicit saves detect conflicts. Browser-local drafts survive closing tabs and expired sessions, with recovery controls for failed saves.
-- **Organize shared knowledge.** Browse persistent folders, search artifacts, rename or move them without breaking existing links, archive completed work, and follow requests across workspaces in My reviews.
-- **Bring agents into the same workflow.** A scoped MCP endpoint lets agents publish artifacts, request reviews, read feedback, and revise. Only people can approve.
-- **Administer one organization.** Manage teams, workspace roles, ownership transfers, offboarding, service accounts, and an administrative audit log. Microsoft Entra ID sign-in is optional.
+- **Steer agent work through review.** Agents publish specs through MCP, request a human review, and read the feedback to revise. Resolve architectural questions before committing to an implementation.
+- **Discuss the design where it matters.** Comment on a passage or diagram element, suggest a deletion, and resolve threads. Keep constraints and tradeoffs next to the proposal they concern.
+- **Know exactly what was reviewed.** Approvals and requested changes belong to a saved revision. Compare revisions to see how feedback was addressed; new edits never inherit an old approval.
+- **Keep the decision and its context.** Preserve discussion and revision history, restore earlier content, or export feedback for an agent’s next task.
+- **Coordinate review across projects.** Organize artifacts in folders, search across your workspaces, and follow assigned requests in My reviews. In-app notifications surface replies and review outcomes.
+- **Control access on your infrastructure.** Scope agent credentials to a workspace, manage team membership and service accounts, and use optional Microsoft Entra sign-in. Organization administration and access changes have an audit trail.
+
+Artifacts currently use **Markdown**, including Mermaid diagrams, code blocks, math, and images. Standalone HTML artifacts and interactive HTML previews are not supported.
 
 ## Install
 
@@ -40,11 +46,13 @@ Upgrading from 0.1.0? Version 0.2.0 adds persistent folders and migrates the dat
 
 ## A typical review
 
-1. Create a workspace and invite the people who need access.
-2. Write or publish a Markdown artifact.
-3. Request a review of the saved revision. The reviewer can annotate passages and approve or request changes.
-4. Revise the artifact, compare it with the reviewed version, and request another review.
-5. Keep the record here or export the revision's feedback as Markdown.
+The [webhook delivery example](docs/examples/webhook-delivery.md) illustrates this workflow:
+
+1. Ask an agent to draft a webhook delivery design with a system diagram, failure cases, and open decisions. It publishes `specs/webhook-delivery.md` through MCP.
+2. Request a review from the engineer responsible for the service.
+3. Discuss retry safety on the relevant passage or diagram, then approve or request changes on that revision.
+4. Have the agent read the feedback and revise. Compare the versions and review the changes.
+5. Use the reviewed spec and its decision record to guide implementation.
 
 Approvals express a review decision; they do not lock editing or enforce an implementation gate. A review request is completed by a fresh response from its assigned reviewer on its exact revision.
 
@@ -60,9 +68,13 @@ Keys are limited to one workspace and read or write access. Personal keys follow
 
 ## Designed for explicit review
 
-Checkpoint uses explicit saves and periodic refresh. It does not provide simultaneous typing, Git synchronization, public artifact links, or HTML artifact hosting. In-app notifications cover review requests, replies and review outcomes; email and chat delivery are not included.
+Checkpoint uses explicit saves and periodic refresh. Concurrent saves preserve the stale draft for reconciliation. It does not provide simultaneous typing, Git synchronization, or public artifact links. Notifications are in-app; email and chat delivery are not included.
 
 Drafts are stored in the current browser and do not sync across devices or enter server backups. Relative Markdown links stay associated with their original destinations after moves; old paths remain reserved. Access remains workspace-based, including when a link is shared elsewhere.
+
+## Install the web app
+
+Open your installation over HTTPS. Supporting browsers offer **Install Checkpoint**; you can also find installation guidance under **your name → Account & appearance**. The app opens in its own window with the Checkpoint icon. It still needs a connection to your server. See [browser installation](docs/installation.md#install-in-your-browser) for platform details.
 
 ## Develop and contribute
 
@@ -82,3 +94,5 @@ The development UI runs at `http://localhost:5173`. Create the first account the
 Checkpoint uses the pinned open-source Plannotator viewer, editor and diff components. It is an independent project, not affiliated with the commercial Plannotator Workspaces offering. Artifact Server is not required.
 
 Checkpoint is licensed under [Apache-2.0](LICENSE). See [third-party notices](THIRD_PARTY_NOTICES.md); distributed browser builds include `/THIRD_PARTY_LICENSES.txt` with dependency license texts.
+
+Logo SVGs, transparent PNGs, and app icons are in [`public/brand`](public/brand). See the [asset guide](docs/branding.md) for light and dark variants.

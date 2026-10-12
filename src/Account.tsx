@@ -1,4 +1,5 @@
 import { Appearance } from './Appearance';
+import { InstallSettings } from './InstallApp';
 import { useEffect, useState } from 'react';
 import { api, post, errorText } from './api';
 import { SettingsPage, ErrorMessage, Loading } from './ui';
@@ -23,6 +24,7 @@ export function Account({ onClose }: { onClose: () => void }) {
         </p>
         <Appearance />
       </section>
+      <InstallSettings />
       <h2>Identity</h2>
       <ErrorMessage message={error} />
       {!status ? (

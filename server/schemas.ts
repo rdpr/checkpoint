@@ -17,7 +17,7 @@ export const path = z
       !/[\x00-\x1f\x7f]/.test(value) &&
       value.split('/').every((part) => part && part !== '.' && part !== '..') &&
       /\.md$/i.test(value),
-    'Use a relative Markdown path, such as specs/plan.md.',
+    'Use a relative Markdown path, such as specs/webhook-delivery.md.',
   );
 export const account = z.object({
   name: z.string().trim().min(1).max(80),

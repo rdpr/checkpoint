@@ -58,10 +58,14 @@ export function Auth({
         <Brand />
         <div className="auth-message">
           <h1>
-            Review the plan.
+            Agent work.
             <br />
-            Keep the decision.
+            Engineering judgment.
           </h1>
+          <p>
+            Review specs, challenge tradeoffs, and give agents clear feedback
+            on the decisions that shape the work.
+          </p>
         </div>
         <div className="auth-appearance">
           <Appearance />

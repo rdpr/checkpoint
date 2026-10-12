@@ -81,6 +81,18 @@ kubectl -n checkpoint rollout status statefulset/checkpoint --timeout=120s
 
 Remove the bootstrap input after success. Do not use Helm `--wait` before bootstrap on a new installation: readiness deliberately requires an initialized administrator. Data and backup PVCs are retained. Test deployment and restore with your actual CSI driver and ingress before onboarding users.
 
+## Install in your browser
+
+After the server is running, open its HTTPS address to install Checkpoint as a web app. Localhost also works for development. No additional server configuration is needed: the app includes a manifest, standalone display mode, and desktop and mobile icons.
+
+- **Chrome and Edge:** when the browser offers installation, Checkpoint shows an **Install Checkpoint** suggestion. You can also use the browser’s install icon or app installation menu. Dismissing the suggestion hides it for 30 days; **Account & appearance** still offers installation when available.
+- **iPhone and iPad:** use **Share → Add to Home Screen**.
+- **Safari on Mac:** use **File → Add to Dock**.
+
+Browser support and prompt timing vary. Checkpoint cannot force the browser’s native prompt to appear immediately. The account screen includes manual installation guidance when a native prompt is unavailable. See [MDN’s installation guide](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Making_PWAs_installable) for browser requirements.
+
+Installed Checkpoint uses the same server, sign-in, and workspace permissions. It requires a network connection to load and save reviews. Installation does not add offline artifact caching or background synchronization; unsaved drafts retain the existing browser-local recovery behavior.
+
 ## Microsoft Entra ID
 
 Register a single-tenant **Web** application with redirect URI `https://YOUR-ORIGIN/api/auth/entra/callback` (including any non-default port). Create a client secret and configure:

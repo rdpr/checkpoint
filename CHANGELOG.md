@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- New Checkpoint C-and-point identity throughout the app and README, with light/dark SVGs, transparent PNGs, favicons, and installation icons.
+- Browser installation with a standalone app window, a dismissible install suggestion, and platform guidance in Account settings.
+- Engineering-focused onboarding and documentation, with a reproducible architecture review demo showing diagrams, decisions, and agent feedback.
+
 ## 0.2.0 — 2026-10-12
 
 ### Review and navigation
