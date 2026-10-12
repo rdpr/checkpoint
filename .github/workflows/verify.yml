@@ -47,12 +47,19 @@ jobs:
           docker build --build-arg SOURCE_COMMIT="$COMMIT" --build-arg BUILD_VERSION="$VERSION" -t checkpoint:candidate .
       - name: Exercise Compose, backup, restore and monitoring
         run: TEST_IMAGE=checkpoint:candidate python3 ops/test-container.py
+      - name: Generate dependency inventory and notices
+        run: |
+          docker run --rm --entrypoint npm checkpoint:candidate sbom --package-lock-only --omit=dev --sbom-format=cyclonedx | jq '.metadata.component.name = "checkpoint" | .metadata.component.type = "application"' > checkpoint-sbom.cdx.json
+          docker run --rm --entrypoint cat checkpoint:candidate dist/THIRD_PARTY_LICENSES.txt > checkpoint-licenses.txt
       - name: Package the tested image
         run: docker save checkpoint:candidate | gzip > checkpoint-image.tar.gz
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: candidate-image
-          path: checkpoint-image.tar.gz
+          path: |
+            checkpoint-image.tar.gz
+            checkpoint-sbom.cdx.json
+            checkpoint-licenses.txt
           compression-level: 0
           retention-days: 3
   kubernetes:

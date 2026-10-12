@@ -65,7 +65,6 @@ jobs:
           export RELEASE_IMAGE="$DIGEST"
           npm run release:package
           helm package deploy/kubernetes --destination release
-          docker run --rm --entrypoint npm "$IMAGE:$VERSION" sbom --omit=dev --sbom-format=cyclonedx > release/checkpoint-sbom.cdx.json
-          docker run --rm --entrypoint cat "$IMAGE:$VERSION" dist/THIRD_PARTY_LICENSES.txt > release/checkpoint-licenses.txt
+          cp checkpoint-sbom.cdx.json checkpoint-licenses.txt release/
           (cd release && sha256sum -- * > SHA256SUMS)
           gh release create "$TAG" release/* --verify-tag --title "Checkpoint $VERSION" --notes-file release/RELEASE_NOTES.md

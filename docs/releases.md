@@ -41,10 +41,10 @@ The repository and package visibility are administrative choices. Publishing a r
 | `checkpoint-VERSION-deploy.tar.gz` | Compose and Kubernetes manifests with installation and operations guides |
 | `checkpoint-VERSION.tgz` | Packaged Helm chart |
 | `release.json` | Version, source commit, database schema, platform, workflow and image digest |
-| `checkpoint-sbom.cdx.json` | Runtime dependency inventory in CycloneDX format |
+| `checkpoint-sbom.cdx.json` | Locked production JavaScript dependencies in CycloneDX format |
 | `checkpoint-licenses.txt` | Included dependency license texts and notices |
 | `SHA256SUMS` | Checksums of the release files |
 
-The container includes browser dependency notices at `/THIRD_PARTY_LICENSES.txt`. Checksums detect corruption; they are not a signed identity attestation. Obtain releases through the trusted repository and verify the source commit and workflow before installation.
+The SBOM describes the production npm dependency graph; it does not inventory operating-system packages. The container includes browser dependency notices at `/THIRD_PARTY_LICENSES.txt`. Checksums detect corruption; they are not a signed identity attestation. Obtain releases through the trusted repository and verify the source commit and workflow before installation.
 
 `npm run release:check` validates version alignment and the tracked publication inventory. `npm run release:package` requires committed, clean source and writes archives to `release/`. Both archives use Git's tracked source, so operator files elsewhere in the checkout cannot leak into a release.
