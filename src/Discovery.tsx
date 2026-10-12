@@ -1,25 +1,31 @@
+import { artifactLocation } from './api';
+import { FolderPicker, pathInFolder } from './Folders';
+import { Select } from './Select';
 import { useEffect, useState } from 'react';
 import type {
-  Document,
+  Catalog,
+  Artifact,
   SearchHit,
   Workspace,
   WorkspaceNotification,
   ReviewRequest,
 } from '../shared/types';
 import { api, post, errorText, dateLabel } from './api';
-import { ErrorMessage, Modal, Loading } from './ui';
+import { SettingsPage, ErrorMessage, Modal, Loading } from './ui';
 
-export function SearchDocuments({
+export function SearchArtifacts({
   workspaces,
+  initialWorkspaceId = '',
   onOpen,
   onClose,
 }: {
   workspaces: Workspace[];
-  onOpen: (workspaceId: string, documentId: string) => void;
+  initialWorkspaceId?: string;
+  onOpen: (workspaceId: string, artifactId: string) => void;
   onClose: () => void;
 }) {
   const [query, setQuery] = useState(''),
-    [workspaceId, setWorkspace] = useState(''),
+    [workspaceId, setWorkspace] = useState(initialWorkspaceId),
     [archived, setArchived] = useState(false);
   const [hits, setHits] = useState<SearchHit[]>([]),
     [error, setError] = useState<string | null>(null),
@@ -53,7 +59,7 @@ export function SearchDocuments({
     };
   }, [query, workspaceId, archived]);
   return (
-    <Modal title="Search documents" onClose={onClose}>
+    <Modal title="Search artifacts" onClose={onClose}>
       <label>
         Search saved content and paths
         <input
@@ -67,7 +73,8 @@ export function SearchDocuments({
       <div className="discovery-controls">
         <label>
           Workspace
-          <select
+          <Select
+            searchable
             aria-label="Workspace"
             value={workspaceId}
             onChange={(e) => setWorkspace(e.target.value)}
@@ -78,7 +85,7 @@ export function SearchDocuments({
                 {w.name}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label className="checkbox-label">
           <input
@@ -97,25 +104,28 @@ export function SearchDocuments({
       {loading ? (
         <Loading label="Searching…" />
       ) : (
-        <div className="search-results">
+        <ul className="search-results" aria-label="Search results">
           {hits.map((h) => (
-            <button
-              className="search-result"
-              key={h.id}
-              onClick={() => onOpen(h.workspaceId, h.id)}
-            >
-              <strong>
-                {h.path}
-                {h.archivedAt ? ' · Archived' : ''}
-              </strong>
-              <small>{h.workspaceName}</small>
-              <p>{h.snippet}</p>
-            </button>
+            <li key={h.id}>
+              <button
+                className="search-result"
+                onClick={() => onOpen(h.workspaceId, h.id)}
+              >
+                <strong>
+                  {artifactLocation(h.path)}
+                  {h.archivedAt ? ' · Archived' : ''}
+                </strong>
+                <small>{h.workspaceName}</small>
+                <p className="result-preview">{h.snippet}</p>
+              </button>
+            </li>
           ))}
           {query.trim() && !hits.length && !error && (
-            <p className="muted">No matching documents.</p>
+            <li className="list-empty">
+              No matching artifacts. Try another name or phrase.
+            </li>
           )}
-        </div>
+        </ul>
       )}
     </Modal>
   );
@@ -126,7 +136,7 @@ export function Notifications({
   onClose,
   onCount,
 }: {
-  onOpen: (workspaceId: string, documentId: string, commentId?: string) => void;
+  onOpen: (workspaceId: string, artifactId: string, commentId?: string) => void;
   onRequest: (request: ReviewRequest) => void;
   onClose: () => void;
   onCount: (count: number) => void;
@@ -171,14 +181,14 @@ export function Notifications({
       }>('/notifications/read', { id: n.id });
       onCount(next.unreadCount);
       if (request) onRequest(request);
-      else onOpen(n.workspaceId, n.documentId, n.commentId ?? undefined);
+      else onOpen(n.workspaceId, n.artifactId, n.commentId ?? undefined);
     } catch (e) {
       setError(errorText(e));
       setBusy(false);
     }
   }
   return (
-    <Modal title="Notifications" onClose={onClose}>
+    <SettingsPage title="Notifications" onClose={onClose}>
       <p className="muted">
         Review requests, outcomes, and replies in discussions you’ve joined.
       </p>
@@ -206,58 +216,74 @@ export function Notifications({
           Mark all as read
         </button>
       )}
-      <div className="search-results">
+      <ul className="search-results" aria-label="Notifications">
         {items.map((n) => (
-          <button
-            disabled={busy}
-            className={`search-result ${n.readAt ? '' : 'unread'}`}
-            key={n.id}
-            onClick={() => void open(n)}
-          >
-            <strong>
-              {!n.readAt ? '● ' : ''}
-              {n.actorName}{' '}
-              {
+          <li key={n.id}>
+            <button
+              disabled={busy}
+              className={`search-result ${n.readAt ? '' : 'unread'}`}
+              onClick={() => void open(n)}
+            >
+              <strong>
+                {!n.readAt && (
+                  <span className="notification-unread" aria-label="Unread">
+                    ●{' '}
+                  </span>
+                )}
+                {n.actorName}{' '}
                 {
-                  reply: 'replied',
-                  review_requested: 'requested your review',
-                  approved: 'approved your review request',
-                  changes_requested: 'requested changes',
-                  withdrawn: 'withdrew their review',
-                }[n.kind]
-              }
-            </strong>
-            <small>
-              {n.workspaceName} · {n.path} · {dateLabel(n.createdAt)}
-            </small>
-            {n.preview && <p>{n.preview}</p>}
-          </button>
+                  {
+                    reply: 'replied',
+                    review_requested: 'requested your review',
+                    approved: 'approved your review request',
+                    changes_requested: 'requested changes',
+                    withdrawn: 'withdrew their review',
+                  }[n.kind]
+                }
+              </strong>
+              <small>
+                {n.workspaceName} · {artifactLocation(n.path)} ·{' '}
+                {dateLabel(n.createdAt)}
+              </small>
+              {n.preview && <p className="result-preview">{n.preview}</p>}
+            </button>
+          </li>
         ))}
         {!items.length && !error && (
-          <p className="muted">You’re all caught up.</p>
+          <li className="list-empty">
+            You’re all caught up. New requests, replies, and review outcomes
+            will appear here.
+          </li>
         )}
-      </div>
-    </Modal>
+      </ul>
+    </SettingsPage>
   );
 }
-export function DocumentActions({
+export function ArtifactActions({
   doc,
   onChanged,
 }: {
-  doc: Document;
-  onChanged: (doc: Document) => void;
+  doc: Artifact;
+  onChanged: (doc: Artifact) => void;
 }) {
   const [open, setOpen] = useState(false),
-    [path, setPath] = useState(doc.path),
+    [name, setName] = useState(
+      doc.path.split('/').pop()!.replace(/\.md$/i, ''),
+    ),
+    [folderId, setFolderId] = useState(doc.folderId),
+    [catalog, setCatalog] = useState<Catalog | null>(null),
     [error, setError] = useState<string | null>(null),
     [busy, setBusy] = useState(false);
   // Keep the displayed snapshot while this dialog is open so concurrent changes conflict.
   const [snapshot, setSnapshot] = useState(doc);
+  const path = catalog
+    ? pathInFolder(catalog.folders, folderId, name)
+    : doc.path;
   async function save(archive?: boolean) {
     setBusy(true);
     setError(null);
     try {
-      const next = await api<Document>(`/documents/${doc.id}`, {
+      const next = await api<Artifact>(`/artifacts/${doc.id}`, {
         method: 'PATCH',
         body: JSON.stringify({
           expectedRevisionId: snapshot.currentRevisionId,
@@ -277,17 +303,26 @@ export function DocumentActions({
     <>
       <button
         className="text-button"
-        onClick={() => {
+        onClick={async () => {
           setSnapshot(doc);
-          setPath(doc.path);
+          setName(doc.path.split('/').pop()!.replace(/\.md$/i, ''));
+          setFolderId(doc.folderId);
+          setCatalog(null);
           setError(null);
           setOpen(true);
+          try {
+            setCatalog(
+              await api<Catalog>(`/workspaces/${doc.workspaceId}/catalog`),
+            );
+          } catch (e) {
+            setError(errorText(e));
+          }
         }}
       >
-        Manage document
+        Manage artifact
       </button>
       {open && (
-        <Modal title="Manage document" onClose={() => setOpen(false)}>
+        <Modal title="Manage artifact" onClose={() => setOpen(false)}>
           <ErrorMessage message={error} />
           <form
             onSubmit={(e) => {
@@ -296,32 +331,39 @@ export function DocumentActions({
             }}
           >
             <label>
-              Document path
+              Artifact name
               <input
-                value={path}
-                onChange={(e) => setPath(e.target.value)}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
                 required
-                maxLength={240}
+                maxLength={120}
+                pattern="[^/\\\\]+"
               />
             </label>
+            {catalog && (
+              <FolderPicker
+                folders={catalog.folders}
+                value={folderId}
+                onChange={setFolderId}
+              />
+            )}
             <p className="small muted">
-              Rename or move within this workspace using a relative .md path,
-              such as plans/launch.md. Links to this document and its history
-              stay intact.
+              Choose a name and folder. Links, discussions, and history stay
+              intact.
             </p>
             <button
               className="button"
-              disabled={busy || path === snapshot.path}
+              disabled={busy || !catalog || path === snapshot.path}
             >
-              Save path
+              Save changes
             </button>
           </form>
           <hr />
           <h3>
-            {doc.archivedAt ? 'Restore from archive' : 'Archive document'}
+            {doc.archivedAt ? 'Restore from archive' : 'Archive artifact'}
           </h3>
           <p className="muted">
-            Archived documents remain readable, with their history and
+            Archived artifacts remain readable, with their history and
             discussions. Editing and pending review requests pause until you
             unarchive.
           </p>
@@ -330,7 +372,7 @@ export function DocumentActions({
             disabled={busy}
             onClick={() => void save(!doc.archivedAt)}
           >
-            {doc.archivedAt ? 'Unarchive document' : 'Archive document'}
+            {doc.archivedAt ? 'Unarchive artifact' : 'Archive artifact'}
           </button>
         </Modal>
       )}

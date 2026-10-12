@@ -29,15 +29,11 @@ test('review revisions without retargeting feedback, then reattach a missing pas
   };
   // This scenario owns a separate workspace and can also run on a fresh test DB.
   const status = await (await page.request.get('/api/auth/status')).json();
-  await send(
-    page.request,
-    status.needsSetup ? '/auth/setup' : '/auth/login',
-    {
-      name: 'Alex Morgan',
-      email: 'alex@example.test',
-      password,
-    },
-  );
+  await send(page.request, status.needsSetup ? '/auth/setup' : '/auth/login', {
+    name: 'Alex Morgan',
+    email: 'alex@example.test',
+    password,
+  });
   const workspace = await send(page.request, '/workspaces', {
     name: 'Revision review',
   });
@@ -46,12 +42,12 @@ test('review revisions without retargeting feedback, then reattach a missing pas
   const body2 =
     '# Revision plan\n\n## New approach\n\nChoose the new implementation.\n\nKeep the stable task.\n\nA passage that will move.\n';
   const body3 = body2 + '\nShip after the team review.\n';
-  const doc = await send(page.request, '/documents', {
+  const doc = await send(page.request, '/artifacts', {
     workspaceId: workspace.id,
     path: 'review/plan.md',
     body: body1,
   });
-  const url = `/?workspace=${workspace.id}&document=${doc.id}`;
+  const url = `/?workspace=${workspace.id}&artifact=${doc.id}`;
   const other = await browser.newContext();
   const teammate = await other.newPage();
   teammate.on('pageerror', (e) => errors.push(e.message));
@@ -69,7 +65,7 @@ test('review revisions without retargeting feedback, then reattach a missing pas
   await page.goto(url);
   await teammate.goto(url);
   await page
-    .locator('.document-surface')
+    .locator('.artifact-surface')
     .getByText('Remove this legacy task.', { exact: true })
     .click({ clickCount: 3 });
   await page
@@ -81,7 +77,7 @@ test('review revisions without retargeting feedback, then reattach a missing pas
   ).toBeVisible();
   // A second old anchor exercises upstream carry-forward relocation.
   await page
-    .locator('.document-surface')
+    .locator('.artifact-surface')
     .getByText('A passage that will move.', { exact: true })
     .click({ clickCount: 3 });
   await page
@@ -92,7 +88,7 @@ test('review revisions without retargeting feedback, then reattach a missing pas
     page.getByText('Track the moved passage.', { exact: true }),
   ).toBeVisible();
   await page
-    .getByRole('button', { name: 'Review this revision', exact: true })
+    .getByRole('button', { name: 'Finish review', exact: true })
     .click();
   await page.getByRole('button', { name: 'Approve', exact: true }).click();
   async function saveRevision(editor: Page, body: string) {
@@ -107,7 +103,7 @@ test('review revisions without retargeting feedback, then reattach a missing pas
   }
   await saveRevision(teammate, body2);
   await expect(
-    page.getByRole('region', { name: 'Document review' }),
+    page.getByRole('region', { name: 'Artifact review' }),
   ).toContainText('Revision 2', { timeout: 12000 });
   const orphan = page
     .locator('.comment-card')
@@ -121,9 +117,7 @@ test('review revisions without retargeting feedback, then reattach a missing pas
   await page
     .getByRole('button', { name: 'Review changes', exact: true })
     .click();
-  await expect(page.getByLabel('Comparison baseline')).toHaveValue(
-    doc.currentRevisionId,
-  );
+  await expect(page.getByLabel('Comparison baseline')).toHaveText(/Revision 1/);
   await expect(
     page.getByText('From your reviewed revision', { exact: false }),
   ).toBeVisible();
@@ -146,7 +140,7 @@ test('review revisions without retargeting feedback, then reattach a missing pas
   await expect(diffComment).toContainText('Revision 1 → 2 · removed passage');
   await page.getByRole('button', { name: /^Rendered/ }).click();
   await page
-    .getByRole('button', { name: 'Review this revision', exact: true })
+    .getByRole('button', { name: 'Finish review', exact: true })
     .click();
   await page
     .getByLabel('Review note (optional)')
@@ -164,15 +158,15 @@ test('review revisions without retargeting feedback, then reattach a missing pas
   await expect(page.locator('.revision-diff')).not.toContainText(
     'Ship after the team review.',
   );
+  await page.getByRole('button', { name: 'Keep draft for later' }).click();
   await page
     .getByRole('button', { name: 'Review latest changes', exact: true })
     .click();
   await expect(page.locator('.revision-diff')).toContainText(
     'Ship after the team review.',
   );
-  await expect(page.getByLabel('Comparison baseline')).toHaveValue(
-    doc.currentRevisionId,
-  );
+  await expect(page.getByLabel('Comparison baseline')).toHaveText(/Revision 1/);
+  await page.getByRole('button', { name: 'Resume review draft' }).click();
   await expect(
     page.getByRole('button', { name: 'Approve', exact: true }),
   ).toBeDisabled();
@@ -180,13 +174,13 @@ test('review revisions without retargeting feedback, then reattach a missing pas
     .getByRole('button', { name: 'Discard review draft', exact: true })
     .click();
   await page
-    .getByRole('button', { name: 'Review this revision', exact: true })
+    .getByRole('button', { name: 'Finish review', exact: true })
     .click();
   await page
     .getByRole('button', { name: 'Request changes', exact: true })
     .click();
   await expect(
-    page.getByRole('region', { name: 'Document review' }),
+    page.getByRole('region', { name: 'Artifact review' }),
   ).toContainText('Changes requested');
   await diffComment
     .getByRole('button', { name: 'Open original comparison' })
@@ -195,26 +189,24 @@ test('review revisions without retargeting feedback, then reattach a missing pas
     'to revision 2',
   );
   await expect(
-    page.getByRole('button', { name: 'Review this revision', exact: true }),
+    page.getByRole('button', { name: 'Finish review', exact: true }),
   ).toHaveCount(0);
-  await page.getByRole('button', { name: 'Read', exact: true }).click();
+  await page.getByRole('button', { name: 'Artifact', exact: true }).click();
   await orphan.getByRole('button', { name: 'Reattach discussion' }).click();
   await page
-    .locator('.document-surface')
+    .locator('.artifact-surface')
     .getByText('Choose the new implementation.', { exact: true })
     .click({ clickCount: 3 });
   await page.locator('[data-selection-actions="true"]').click();
   await page.getByText('Attach discussion here', { exact: true }).click();
-  await expect(orphan).toContainText(
-    'Reattached by Alex Morgan on revision 3',
-  );
+  await expect(orphan).toContainText('Reattached by Alex Morgan on revision 3');
   await expect(orphan).toContainText('Remove this legacy task.');
   await expect(orphan).toContainText('Choose the new implementation.');
   await expect(orphan).not.toContainText('Unanchored');
   await page.reload();
   await expect(
     page
-      .locator('.document-surface mark')
+      .locator('.artifact-surface mark')
       .filter({ hasText: 'Choose the new implementation.' }),
   ).toBeVisible();
   await page
@@ -222,14 +214,14 @@ test('review revisions without retargeting feedback, then reattach a missing pas
     .click();
   await page.getByRole('button', { name: 'Approve', exact: true }).click();
   await expect(
-    page.getByRole('region', { name: 'Document review' }),
+    page.getByRole('region', { name: 'Artifact review' }),
   ).toContainText('Approved');
   const current = await (
-    await page.request.get(`/api/documents/${doc.id}`)
+    await page.request.get(`/api/artifacts/${doc.id}`)
   ).json();
   const feedback = await (
     await page.request.get(
-      `/api/documents/${doc.id}/revisions/${current.currentRevisionId}/feedback`,
+      `/api/artifacts/${doc.id}/revisions/${current.currentRevisionId}/feedback`,
     )
   ).json();
   expect(feedback.markdown).toContain('Comparison: revision 1 → 2');
@@ -251,9 +243,6 @@ test('review revisions without retargeting feedback, then reattach a missing pas
   const rawBounds = await rawControl.boundingBox();
   expect(rawBounds!.x + rawBounds!.width).toBeLessThanOrEqual(390);
 
-  await page
-    .getByRole('button', { name: 'Collapse sidebar', exact: true })
-    .click();
   await page
     .getByRole('button', { name: 'Raw', exact: true })
     .scrollIntoViewIfNeeded();

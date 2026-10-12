@@ -51,7 +51,7 @@ Download `checkpoint-VERSION.tgz` from the release. Create a private values file
 origin: https://checkpoint.example.com
 image:
   repository: ghcr.io/rdpr/checkpoint
-  tag: '0.1.0'
+  tag: '0.2.0'
   digest: '' # Prefer the sha256:... digest from release.json.
 storage:
   className: YOUR_BLOCK_STORAGE_CLASS
@@ -72,7 +72,7 @@ Create a namespace and metrics secret. The secret file must contain at least 32 
 ```sh
 kubectl create namespace checkpoint
 kubectl -n checkpoint create secret generic checkpoint-metrics --from-file=token=/private/metrics-token
-helm install checkpoint ./checkpoint-0.1.0.tgz -n checkpoint -f installation.private.yaml
+helm install checkpoint ./checkpoint-0.2.0.tgz -n checkpoint -f installation.private.yaml
 kubectl -n checkpoint wait --for=jsonpath='{.status.phase}'=Running pod/checkpoint-0 --timeout=180s
 kubectl -n checkpoint exec -i checkpoint-0 -c app -- node --import tsx server/operator.ts bootstrap < bootstrap.private.json
 kubectl -n checkpoint rollout status statefulset/checkpoint --timeout=120s
@@ -93,7 +93,7 @@ Register a single-tenant **Web** application with redirect URI `https://YOUR-ORI
 
 In Compose, fill the IDs in `.env` and the mounted Entra secret file. In Helm, create a Secret with key `client-secret`, set `entra.secretName`, `entra.tenantId` and `entra.clientId`, and use `authMode: optional` initially.
 
-Existing administrators must sign in with their password, open **Account** and connect Microsoft before enforcement. Email equality never links accounts automatically. New users need a valid workspace invitation. Entra authenticates identity; it does not grant Checkpoint membership or administrator roles. The application requests `openid profile email`, with no Microsoft Graph application permissions.
+Existing administrators must sign in with their password, open **your name → Account & appearance** and connect Microsoft before enforcement. Email equality never links accounts automatically. New users need a valid workspace invitation. Entra authenticates identity; it does not grant Checkpoint membership or administrator roles. The application requests `openid profile email`, with no Microsoft Graph application permissions.
 
 Use enterprise-application assignments and your tenant's MFA policy to control sign-in. Entra sessions last eight hours. Enforcing Entra immediately invalidates ordinary password sessions; agent keys remain independent. Directory synchronization is not implemented: offboard people in Checkpoint to revoke existing application sessions and keys immediately. Rotate client secrets before expiry and restart after changing configuration.
 

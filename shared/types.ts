@@ -9,9 +9,21 @@ export interface Workspace {
   name: string;
   role: Role;
   createdAt: string;
-  documentCount: number;
+  artifactCount: number;
 }
-export interface DocumentSummary {
+export interface Folder {
+  id: string;
+  workspaceId: string;
+  parentId: string | null;
+  name: string;
+}
+export interface Catalog {
+  version: number;
+  folders: Folder[];
+  artifacts: ArtifactSummary[];
+}
+export interface ArtifactSummary {
+  folderId: string | null;
   id: string;
   workspaceId: string;
   path: string;
@@ -22,7 +34,7 @@ export interface DocumentSummary {
 }
 export interface Revision {
   id: string;
-  documentId: string;
+  artifactId: string;
   number: number;
   body: string;
   authorName: string;
@@ -30,7 +42,7 @@ export interface Revision {
   createdAt: string;
   restoredFrom: string | null;
 }
-export interface Document extends DocumentSummary {
+export interface Artifact extends ArtifactSummary {
   revision: Revision;
   reviews: ReviewDecision[];
 }
@@ -50,7 +62,7 @@ export interface Reattachment {
 }
 export interface Comment {
   id: string;
-  documentId: string;
+  artifactId: string;
   revisionId: string;
   body: string;
   quote: string;
@@ -119,7 +131,7 @@ export interface ReviewRequest {
   archivedAt: string | null;
   id: string;
   workspaceId: string;
-  documentId: string;
+  artifactId: string;
   path: string;
   revisionId: string;
   revisionNumber: number;
@@ -143,7 +155,7 @@ export interface ReviewRequest {
     | 'cancelled'
     | 'superseded'
     | 'reviewer_unavailable'
-    | 'document_archived';
+    | 'artifact_archived';
   outdated: boolean;
   currentRevisionId: string;
   decision: ReviewDecision | null;
@@ -189,7 +201,7 @@ export interface AuditEntry {
   createdAt: string;
 }
 
-export interface SearchHit extends DocumentSummary {
+export interface SearchHit extends ArtifactSummary {
   workspaceName: string;
   snippet: string;
 }
@@ -201,7 +213,7 @@ export interface WorkspaceNotification {
     | 'approved'
     | 'changes_requested'
     | 'withdrawn';
-  documentId: string;
+  artifactId: string;
   workspaceId: string;
   workspaceName: string;
   path: string;

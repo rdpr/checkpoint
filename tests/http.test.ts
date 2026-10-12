@@ -94,12 +94,12 @@ test('HTTP sessions, CSRF/host checks, permissions and logout', async () => {
       body: '{"name":"bad"}',
     });
     assert.equal(noOrigin.status, 403);
-    const doc = f.store.documents(f.owner, f.workspace.id)[0];
+    const doc = f.store.artifacts(f.owner, f.workspace.id)[0];
     const png = Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jVxkAAAAASUVORK5CYII=',
       'base64',
     );
-    const upload = await f.request(`/api/documents/${doc.id}/images`, {
+    const upload = await f.request(`/api/artifacts/${doc.id}/images`, {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/octet-stream' },
       body: png,
@@ -109,7 +109,7 @@ test('HTTP sessions, CSRF/host checks, permissions and logout', async () => {
     const downloaded = await f.request(image.path, { headers });
     assert.equal(downloaded.headers.get('content-type'), 'image/png');
     assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), png);
-    const comment = await f.request(`/api/documents/${doc.id}/comments`, {
+    const comment = await f.request(`/api/artifacts/${doc.id}/comments`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -120,24 +120,24 @@ test('HTTP sessions, CSRF/host checks, permissions and logout', async () => {
     assert.equal(comment.status, 201);
     assert.equal((await comment.json()).images[0].path, image.path);
     const other = f.store.createWorkspace(f.owner, { name: 'Other' });
-    const otherDoc = f.store.createDocument(f.owner, {
+    const otherDoc = f.store.createArtifact(f.owner, {
       workspaceId: other.id,
       path: 'plan.md',
       body: '# Private',
     });
-    const wrongDocument = await f.request(
-      `/api/documents/${otherDoc.id}/comments`,
+    const wrongArtifact = await f.request(
+      `/api/artifacts/${otherDoc.id}/comments`,
       {
         method: 'POST',
         headers,
         body: JSON.stringify({
           revisionId: otherDoc.currentRevisionId,
-          body: 'Cross-document reference',
+          body: 'Cross-artifact reference',
           images: [{ path: image.path, name: 'Private' }],
         }),
       },
     );
-    assert.equal(wrongDocument.status, 400);
+    assert.equal(wrongArtifact.status, 400);
     const scopedKey = f.store.createToken(f.owner, other.id, {
       name: 'Other workspace',
       scope: 'read',
@@ -150,7 +150,7 @@ test('HTTP sessions, CSRF/host checks, permissions and logout', async () => {
       ).status,
       404,
     );
-    const invalid = await f.request(`/api/documents/${doc.id}/images`, {
+    const invalid = await f.request(`/api/artifacts/${doc.id}/images`, {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/octet-stream' },
       body: '<svg onload="alert(1)" />',
@@ -184,33 +184,33 @@ test('real MCP client reads, updates, comments, detects stale edits, and loses a
     const tools = await client.listTools();
     assert.ok(tools.tools.some((t) => t.name === 'export_feedback'));
     assert.ok(!tools.tools.some((t) => t.name === 'submit_review'));
-    const doc = f.store.documents(f.owner, f.workspace.id)[0];
+    const doc = f.store.artifacts(f.owner, f.workspace.id)[0];
     const read = await client.callTool({
-      name: 'read_document',
-      arguments: { documentId: doc.id },
+      name: 'read_artifact',
+      arguments: { artifactId: doc.id },
     });
     assert.equal(read.isError, undefined);
     const update = {
-      documentId: doc.id,
+      artifactId: doc.id,
       expectedRevisionId: doc.currentRevisionId,
       body: '# Via MCP',
     };
     assert.equal(
-      (await client.callTool({ name: 'update_document', arguments: update }))
+      (await client.callTool({ name: 'update_artifact', arguments: update }))
         .isError,
       undefined,
     );
     assert.equal(
-      (await client.callTool({ name: 'update_document', arguments: update }))
+      (await client.callTool({ name: 'update_artifact', arguments: update }))
         .isError,
       true,
     );
-    const saved = f.store.document(f.owner, doc.id);
+    const saved = f.store.artifact(f.owner, doc.id);
     assert.equal(saved.revision.agentName, 'Test agent');
     await client.callTool({
       name: 'create_comment',
       arguments: {
-        documentId: doc.id,
+        artifactId: doc.id,
         revisionId: saved.currentRevisionId,
         body: 'Ready for your review.',
         quote: 'Via MCP',
@@ -244,14 +244,14 @@ test('real MCP client reads, updates, comments, detects stale edits, and loses a
     );
     const exported = await client.callTool({
       name: 'export_feedback',
-      arguments: { documentId: doc.id, revisionId: saved.currentRevisionId },
+      arguments: { artifactId: doc.id, revisionId: saved.currentRevisionId },
     });
     assert.match(JSON.stringify(exported), /Updated agent feedback/);
     assert.equal(
       (
         await client.callTool({
           name: 'list_reviews',
-          arguments: { documentId: doc.id },
+          arguments: { artifactId: doc.id },
         })
       ).isError,
       undefined,
@@ -282,7 +282,7 @@ test('real MCP client reads, updates, comments, detects stale edits, and loses a
 test('HTTP review completion preserves identities, revision decisions, rich anchors and concurrent discussions across restart', async () => {
   const f = await fixture();
   try {
-    const doc = f.store.documents(f.owner, f.workspace.id)[0];
+    const doc = f.store.artifacts(f.owner, f.workspace.id)[0];
     const member = async (role: 'editor' | 'viewer', name: string) => {
       const invite = f.store.invite(f.owner, f.workspace.id, { role });
       const user = await f.store.register({
@@ -324,7 +324,7 @@ test('HTTP review completion preserves identities, revision decisions, rich anch
       body: unknown,
       method = 'POST',
     ) => f.request(path, { method, headers, body: JSON.stringify(body) });
-    const reviewUrl = `/api/documents/${doc.id}/reviews`;
+    const reviewUrl = `/api/artifacts/${doc.id}/reviews`;
     const decision = {
       expectedRevisionId: doc.currentRevisionId,
       decision: 'approved',
@@ -344,7 +344,7 @@ test('HTTP review completion preserves identities, revision decisions, rich anch
     const exported = () =>
       f
         .request(
-          `/api/documents/${doc.id}/revisions/${doc.currentRevisionId}/feedback`,
+          `/api/artifacts/${doc.id}/revisions/${doc.currentRevisionId}/feedback`,
           { headers: ownerHeaders },
         )
         .then((r) => r.json());
@@ -370,7 +370,7 @@ test('HTTP review completion preserves identities, revision decisions, rich anch
       htmlAnchor: { selector: '*' },
     };
     const created = await send(
-      `/api/documents/${doc.id}/comments`,
+      `/api/artifacts/${doc.id}/comments`,
       ownerHeaders,
       {
         revisionId: doc.currentRevisionId,
@@ -428,15 +428,15 @@ test('HTTP review completion preserves identities, revision decisions, rich anch
     assert.match(feedback, /Corrected feedback/);
     assert.match(feedback, /Keep this reply/);
     assert.match(feedback, /Diagram node Start/);
-    const next = f.store.updateDocument(f.owner, {
-      documentId: doc.id,
+    const next = f.store.updateArtifact(f.owner, {
+      artifactId: doc.id,
       expectedRevisionId: doc.currentRevisionId,
       body: '# New revision',
     });
     assert.equal((await send(reviewUrl, ownerHeaders, decision)).status, 409);
     const current = await f
       .request(
-        `/api/documents/${doc.id}/revisions/${next.currentRevisionId}/feedback`,
+        `/api/artifacts/${doc.id}/revisions/${next.currentRevisionId}/feedback`,
         { headers: ownerHeaders },
       )
       .then((r) => r.json());
@@ -444,7 +444,7 @@ test('HTTP review completion preserves identities, revision decisions, rich anch
     const secondConnection = new Store(f.filename);
     try {
       assert.equal(
-        secondConnection.document(f.owner, doc.id).reviews.length,
+        secondConnection.artifact(f.owner, doc.id).reviews.length,
         3,
       );
       assert.deepEqual(
@@ -490,7 +490,7 @@ test('HTTP review completion preserves identities, revision decisions, rich anch
     );
     assert.equal(f.store.comments(f.owner, doc.id).length, 0);
     const foreign = f.store.createWorkspace(f.owner, { name: 'Private' });
-    const privateDoc = f.store.createDocument(f.owner, {
+    const privateDoc = f.store.createArtifact(f.owner, {
       workspaceId: foreign.id,
       path: 'private.md',
       body: '# Private',
@@ -498,7 +498,7 @@ test('HTTP review completion preserves identities, revision decisions, rich anch
     assert.equal(
       (
         await f.request(
-          `/api/documents/${privateDoc.id}/revisions/${privateDoc.currentRevisionId}/feedback`,
+          `/api/artifacts/${privateDoc.id}/revisions/${privateDoc.currentRevisionId}/feedback`,
           { headers: editorHeaders },
         )
       ).status,
@@ -506,7 +506,7 @@ test('HTTP review completion preserves identities, revision decisions, rich anch
     );
     assert.equal(
       (
-        await send(`/api/documents/${privateDoc.id}/reviews`, editorHeaders, {
+        await send(`/api/artifacts/${privateDoc.id}/reviews`, editorHeaders, {
           ...decision,
           expectedRevisionId: privateDoc.currentRevisionId,
         })
@@ -543,13 +543,13 @@ test('revision comparisons and reattachment preserve provenance across HTTP, MCP
         headers: customHeaders,
         body: JSON.stringify(body),
       });
-    const initial = f.store.createDocument(f.owner, {
+    const initial = f.store.createArtifact(f.owner, {
       workspaceId: f.workspace.id,
       path: 'revision-review.md',
       body: '# Plan\n\nRemove this legacy task.\n\nKeep the stable task.\n',
     });
-    const next = f.store.updateDocument(f.owner, {
-      documentId: initial.id,
+    const next = f.store.updateArtifact(f.owner, {
+      artifactId: initial.id,
       expectedRevisionId: initial.currentRevisionId,
       body: '# Plan\n\nKeep the stable task.\n',
     });
@@ -566,7 +566,7 @@ test('revision comparisons and reattachment preserve provenance across HTTP, MCP
       side: 'removed',
     };
     assert.ok(diff.blockIndex >= 0);
-    const created = await send(`/api/documents/${initial.id}/comments`, {
+    const created = await send(`/api/artifacts/${initial.id}/comments`, {
       revisionId: next.currentRevisionId,
       body: 'Please retain the context',
       quote: 'Forged quote',
@@ -584,17 +584,17 @@ test('revision comparisons and reattachment preserve provenance across HTTP, MCP
       diff: { ...diff, blockIndex: 99999 },
     };
     assert.equal(
-      (await send(`/api/documents/${initial.id}/comments`, invalid)).status,
+      (await send(`/api/artifacts/${initial.id}/comments`, invalid)).status,
       400,
     );
-    const privateDoc = f.store.createDocument(f.owner, {
+    const privateDoc = f.store.createArtifact(f.owner, {
       workspaceId: f.workspace.id,
       path: 'other.md',
       body: '# Other',
     });
     assert.equal(
       (
-        await send(`/api/documents/${initial.id}/comments`, {
+        await send(`/api/artifacts/${initial.id}/comments`, {
           ...invalid,
           diff: { ...diff, baseRevisionId: privateDoc.currentRevisionId },
         })
@@ -603,7 +603,7 @@ test('revision comparisons and reattachment preserve provenance across HTTP, MCP
     );
     assert.equal(
       (
-        await send(`/api/documents/${initial.id}/comments`, {
+        await send(`/api/artifacts/${initial.id}/comments`, {
           ...invalid,
           diff: { ...diff, baseRevisionId: next.currentRevisionId },
         })
@@ -686,8 +686,8 @@ test('revision comparisons and reattachment preserve provenance across HTTP, MCP
       ).status,
       409,
     );
-    const third = f.store.updateDocument(f.owner, {
-      documentId: initial.id,
+    const third = f.store.updateArtifact(f.owner, {
+      artifactId: initial.id,
       expectedRevisionId: next.currentRevisionId,
       body: '# Plan\n\nChanged again.',
     });
@@ -702,7 +702,7 @@ test('revision comparisons and reattachment preserve provenance across HTTP, MCP
     );
     assert.equal(
       (
-        await send(`/api/documents/${initial.id}/reviews`, {
+        await send(`/api/artifacts/${initial.id}/reviews`, {
           expectedRevisionId: next.currentRevisionId,
           decision: 'approved',
         })
@@ -719,7 +719,7 @@ test('revision comparisons and reattachment preserve provenance across HTTP, MCP
     const olderExport = await client.callTool({
       name: 'export_feedback',
       arguments: {
-        documentId: initial.id,
+        artifactId: initial.id,
         revisionId: next.currentRevisionId,
       },
     });
@@ -728,7 +728,7 @@ test('revision comparisons and reattachment preserve provenance across HTTP, MCP
       /Reattached to revision 3/,
     );
     // An open comparison may still receive feedback on its exact older target.
-    const oldFeedback = await send(`/api/documents/${initial.id}/comments`, {
+    const oldFeedback = await send(`/api/artifacts/${initial.id}/comments`, {
       revisionId: next.currentRevisionId,
       body: 'Still on revision two',
       diff,
@@ -738,7 +738,7 @@ test('revision comparisons and reattachment preserve provenance across HTTP, MCP
     const exported = await client.callTool({
       name: 'export_feedback',
       arguments: {
-        documentId: initial.id,
+        artifactId: initial.id,
         revisionId: third.currentRevisionId,
       },
     });
@@ -838,19 +838,19 @@ test('review requests cross HTTP and MCP with revision-bound rounds, attribution
     assert.ok(reviewers.some((r: any) => r.id === editor.user.id));
     assert.ok(!reviewers.some((r: any) => r.id === viewer.user.id));
     assert.ok(reviewers.every((r: any) => !('email' in r)));
-    const doc = f.store.createDocument(f.owner, {
+    const doc = f.store.createArtifact(f.owner, {
       workspaceId: f.workspace.id,
       path: 'handoff.md',
       body: '# First draft',
     });
     const input = {
-      documentId: doc.id,
+      artifactId: doc.id,
       expectedRevisionId: doc.currentRevisionId,
       reviewerId: editor.user.id,
       message: 'Please check the rollout.',
       requesterName: 'Forged',
     };
-    const path = `/api/documents/${doc.id}/review-requests`;
+    const path = `/api/artifacts/${doc.id}/review-requests`;
     assert.equal((await send(path, input, viewerHeaders)).status, 403);
     assert.equal(
       (await send(path, { ...input, reviewerId: viewer.user.id })).status,
@@ -884,7 +884,7 @@ test('review requests cross HTTP and MCP with revision-bound rounds, attribution
       403,
     );
     const inspect = () => f.store.reviewRequest(f.owner, request.id);
-    await send(`/api/documents/${doc.id}/reviews`, {
+    await send(`/api/artifacts/${doc.id}/reviews`, {
       expectedRevisionId: doc.currentRevisionId,
       decision: 'approved',
     });
@@ -894,7 +894,7 @@ test('review requests cross HTTP and MCP with revision-bound rounds, attribution
       'another reviewer cannot complete the assigned review',
     );
     await send(
-      `/api/documents/${doc.id}/reviews`,
+      `/api/artifacts/${doc.id}/reviews`,
       {
         expectedRevisionId: doc.currentRevisionId,
         decision: 'changes_requested',
@@ -903,8 +903,8 @@ test('review requests cross HTTP and MCP with revision-bound rounds, attribution
       editorHeaders,
     );
     assert.equal(inspect().status, 'changes_requested');
-    const next = await call('update_document', {
-      documentId: doc.id,
+    const next = await call('update_artifact', {
+      artifactId: doc.id,
       expectedRevisionId: doc.currentRevisionId,
       body: '# Plan\n\nRollback included.',
     });
@@ -949,11 +949,11 @@ test('review requests cross HTTP and MCP with revision-bound rounds, attribution
     );
     const before = await call('list_review_requests', {
       workspaceId: f.workspace.id,
-      documentId: doc.id,
+      artifactId: doc.id,
     });
     assert.equal(before.length, 2);
     await send(
-      `/api/documents/${doc.id}/reviews`,
+      `/api/artifacts/${doc.id}/reviews`,
       {
         expectedRevisionId: next.currentRevisionId,
         decision: 'approved',
@@ -963,13 +963,13 @@ test('review requests cross HTTP and MCP with revision-bound rounds, attribution
     );
     assert.equal(f.store.reviewRequest(f.owner, renewed.id).status, 'approved');
     await send(
-      `/api/documents/${doc.id}/reviews`,
+      `/api/artifacts/${doc.id}/reviews`,
       { expectedRevisionId: next.currentRevisionId, decision: 'withdrawn' },
       editorHeaders,
     );
     assert.equal(f.store.reviewRequest(f.owner, renewed.id).status, 'waiting');
     await send(
-      `/api/documents/${doc.id}/reviews`,
+      `/api/artifacts/${doc.id}/reviews`,
       { expectedRevisionId: next.currentRevisionId, decision: 'approved' },
       editorHeaders,
     );
@@ -1005,7 +1005,7 @@ test('review requests cross HTTP and MCP with revision-bound rounds, attribution
       404,
     );
     await send(
-      `/api/documents/${doc.id}/reviews`,
+      `/api/artifacts/${doc.id}/reviews`,
       {
         expectedRevisionId: next.currentRevisionId,
         decision: 'changes_requested',
@@ -1019,7 +1019,7 @@ test('review requests cross HTTP and MCP with revision-bound rounds, attribution
       'a superseded round keeps its outcome even when a later round reviews the same revision',
     );
     await send(
-      `/api/documents/${doc.id}/reviews`,
+      `/api/artifacts/${doc.id}/reviews`,
       { expectedRevisionId: next.currentRevisionId, decision: 'withdrawn' },
       editorHeaders,
     );
@@ -1108,13 +1108,13 @@ test('comment submission retries are durable, scoped to the author, and never re
     const headers = {
       Cookie: login.headers.get('set-cookie')!.split(';')[0],
     };
-    const doc = f.store.documents(f.owner, f.workspace.id)[0];
+    const doc = f.store.artifacts(f.owner, f.workspace.id)[0];
     const input = {
       submissionId: crypto.randomUUID(),
       revisionId: doc.currentRevisionId,
       body: 'Keep one durable discussion.',
     };
-    const path = `/api/documents/${doc.id}/comments`;
+    const path = `/api/artifacts/${doc.id}/comments`;
     const submit = (body = input, auth = headers) =>
       f.request(path, {
         method: 'POST',
@@ -1134,7 +1134,7 @@ test('comment submission retries are durable, scoped to the author, and never re
     const reopened = new Store(f.filename);
     try {
       assert.equal(
-        reopened.addComment(f.owner, { ...input, documentId: doc.id }).id,
+        reopened.addComment(f.owner, { ...input, artifactId: doc.id }).id,
         comment.id,
       );
     } finally {
@@ -1205,8 +1205,8 @@ test('health verifies the database and maintenance pauses browser and MCP writes
       (await (await f.request('/api/health')).json()).maintenance,
       true,
     );
-    const doc = f.store.documents(f.owner, f.workspace.id)[0];
-    const response = await f.request(`/api/documents/${doc.id}/comments`, {
+    const doc = f.store.artifacts(f.owner, f.workspace.id)[0];
+    const response = await f.request(`/api/artifacts/${doc.id}/comments`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -1233,9 +1233,9 @@ test('health verifies the database and maintenance pauses browser and MCP writes
     unlinkSync(marker);
     assert.equal((await f.request('/api/health')).status, 200);
     // A real database failure must fail readiness, rather than always returning ok.
-    f.store.db.exec('ALTER TABLE documents RENAME TO temporarily_unavailable');
+    f.store.db.exec('ALTER TABLE artifacts RENAME TO temporarily_unavailable');
     assert.equal((await f.request('/api/health')).status, 503);
-    f.store.db.exec('ALTER TABLE temporarily_unavailable RENAME TO documents');
+    f.store.db.exec('ALTER TABLE temporarily_unavailable RENAME TO artifacts');
     assert.equal((await f.request('/api/health')).status, 200);
   } finally {
     await f.close();
@@ -1279,19 +1279,19 @@ test('organization administration preserves isolation, combines team access, tra
     const privateWorkspace = f.store.createWorkspace(teammate, {
       name: 'Teammate private workspace',
     });
-    const privateDoc = f.store.createDocument(teammate, {
+    const privateDoc = f.store.createArtifact(teammate, {
       workspaceId: privateWorkspace.id,
       path: 'private.md',
       body: '# Private history',
     });
     assert.equal(
       (
-        await f.request(`/api/documents/${privateDoc.id}`, {
+        await f.request(`/api/artifacts/${privateDoc.id}`, {
           headers: ownerAuth,
         })
       ).status,
       404,
-      'org administration grants no implicit document access',
+      'org administration grants no implicit artifact access',
     );
     assert.equal(
       (await f.request('/api/organization/admin', { headers: teammateAuth }))
@@ -1378,16 +1378,16 @@ test('organization administration preserves isolation, combines team access, tra
       ).status,
       403,
     );
-    const doc = f.store.documents(f.owner, f.workspace.id)[0];
+    const doc = f.store.artifacts(f.owner, f.workspace.id)[0];
     const request = f.store.requestReview(f.owner, {
-      documentId: doc.id,
+      artifactId: doc.id,
       expectedRevisionId: doc.currentRevisionId,
       reviewerId: teammate.user.id,
     });
     const result = await client.callTool({
       name: 'create_comment',
       arguments: {
-        documentId: doc.id,
+        artifactId: doc.id,
         revisionId: doc.currentRevisionId,
         body: 'Keep this team contribution.',
       },
@@ -1421,7 +1421,7 @@ test('organization administration preserves isolation, combines team access, tra
         await client.callTool({
           name: 'create_comment',
           arguments: {
-            documentId: doc.id,
+            artifactId: doc.id,
             revisionId: doc.currentRevisionId,
             body: 'No more write access.',
           },
@@ -1449,7 +1449,7 @@ test('organization administration preserves isolation, combines team access, tra
       'last access removal permanently revokes scoped credentials',
     );
     assert.equal(
-      (await f.request(`/api/documents/${doc.id}`, { headers: teammateAuth }))
+      (await f.request(`/api/artifacts/${doc.id}`, { headers: teammateAuth }))
         .status,
       404,
     );
@@ -1513,7 +1513,7 @@ test('organization administration preserves isolation, combines team access, tra
     );
     assert.throws(() => f.store.inspectInvite(issuedInvite.token));
     assert.equal(
-      f.store.document(f.owner, privateDoc.id).revision.body,
+      f.store.artifact(f.owner, privateDoc.id).revision.body,
       '# Private history',
     );
     assert.equal(
@@ -1624,7 +1624,7 @@ test('discovery, archive lifecycle and notifications respect current access thro
       );
       return r.json();
     };
-    const doc = await json('/documents', {
+    const doc = await json('/artifacts', {
       workspaceId: f.workspace.id,
       path: 'plans/launch.md',
       body: '# Sequoia\n\nUnique launch schedule',
@@ -1632,7 +1632,7 @@ test('discovery, archive lifecycle and notifications respect current access thro
     const hidden = f.store.createWorkspace(teammate, {
       name: 'Private research',
     });
-    const privateDoc = f.store.createDocument(teammate, {
+    const privateDoc = f.store.createArtifact(teammate, {
       workspaceId: hidden.id,
       path: 'private.md',
       body: '# Sequoia secrets',
@@ -1660,17 +1660,17 @@ test('discovery, archive lifecycle and notifications respect current access thro
     );
     const call = async (name: string, args: Record<string, unknown>) =>
       client.callTool({ name, arguments: args });
-    const result = await call('search_documents', { query: 'sequoia' });
+    const result = await call('search_artifacts', { query: 'sequoia' });
     assert.deepEqual(
       (result.structuredContent as any).result.map((d: any) => d.id),
       [doc.id],
     );
     assert.equal(
-      (await call('read_document', { documentId: privateDoc.id })).isError,
+      (await call('read_artifact', { artifactId: privateDoc.id })).isError,
       true,
     );
     const renamed = await json(
-      `/documents/${doc.id}`,
+      `/artifacts/${doc.id}`,
       {
         path: 'approved/release.md',
         expectedRevisionId: doc.currentRevisionId,
@@ -1688,7 +1688,7 @@ test('discovery, archive lifecycle and notifications respect current access thro
     assert.equal(
       (
         await request(
-          `/documents/${doc.id}`,
+          `/artifacts/${doc.id}`,
           {
             archived: true,
             expectedRevisionId: doc.currentRevisionId,
@@ -1700,7 +1700,7 @@ test('discovery, archive lifecycle and notifications respect current access thro
       ).status,
       409,
     );
-    const review = await json(`/documents/${doc.id}/review-requests`, {
+    const review = await json(`/artifacts/${doc.id}/review-requests`, {
       expectedRevisionId: doc.currentRevisionId,
       reviewerId: teammate.user.id,
       message: 'Check the launch',
@@ -1712,13 +1712,13 @@ test('discovery, archive lifecycle and notifications respect current access thro
       teammate.user,
       f.store.invite(f.owner, second.id, { role: 'editor' }).token,
     );
-    const another = f.store.createDocument(f.owner, {
+    const another = f.store.createArtifact(f.owner, {
       workspaceId: second.id,
       path: 'second.md',
       body: '# Second',
     });
     f.store.requestReview(f.owner, {
-      documentId: another.id,
+      artifactId: another.id,
       expectedRevisionId: another.currentRevisionId,
       reviewerId: teammate.user.id,
     });
@@ -1731,7 +1731,7 @@ test('discovery, archive lifecycle and notifications respect current access thro
       2,
     );
     assert.equal((await json('/notifications')).unreadCount, 0);
-    const comment = await json(`/documents/${doc.id}/comments`, {
+    const comment = await json(`/artifacts/${doc.id}/comments`, {
       revisionId: doc.currentRevisionId,
       body: 'Discuss schedule',
     });
@@ -1757,7 +1757,7 @@ test('discovery, archive lifecycle and notifications respect current access thro
     await request('/notifications/read', { id: notices.items[0].id });
     assert.equal((await json('/notifications')).unreadCount, 0);
     const archived = await json(
-      `/documents/${doc.id}`,
+      `/artifacts/${doc.id}`,
       {
         archived: true,
         expectedRevisionId: doc.currentRevisionId,
@@ -1767,7 +1767,7 @@ test('discovery, archive lifecycle and notifications respect current access thro
       'PATCH',
     );
     assert.equal(
-      (await json(`/workspaces/${f.workspace.id}/documents`)).some(
+      (await json(`/workspaces/${f.workspace.id}/artifacts`)).some(
         (d: any) => d.id === doc.id,
       ),
       false,
@@ -1779,12 +1779,12 @@ test('discovery, archive lifecycle and notifications respect current access thro
     );
     assert.equal(
       (await json(`/review-requests/${review.id}`)).status,
-      'document_archived',
+      'artifact_archived',
     );
     assert.equal(
       (
-        await call('update_document', {
-          documentId: doc.id,
+        await call('update_artifact', {
+          artifactId: doc.id,
           expectedRevisionId: doc.currentRevisionId,
           body: 'No',
         })
@@ -1798,7 +1798,7 @@ test('discovery, archive lifecycle and notifications respect current access thro
     );
     assert.equal(
       (
-        await request(`/documents/${doc.id}/reviews`, {
+        await request(`/artifacts/${doc.id}/reviews`, {
           expectedRevisionId: doc.currentRevisionId,
           decision: 'approved',
         })
@@ -1806,11 +1806,11 @@ test('discovery, archive lifecycle and notifications respect current access thro
       409,
     );
     assert.equal(
-      (await json(`/documents/${doc.id}`)).revision.body,
+      (await json(`/artifacts/${doc.id}`)).revision.body,
       doc.revision.body,
     );
     await json(
-      `/documents/${doc.id}`,
+      `/artifacts/${doc.id}`,
       {
         archived: false,
         expectedRevisionId: doc.currentRevisionId,
@@ -1824,7 +1824,7 @@ test('discovery, archive lifecycle and notifications respect current access thro
       'waiting',
     );
     const updated = await request(
-      `/documents/${doc.id}`,
+      `/artifacts/${doc.id}`,
       {
         expectedRevisionId: doc.currentRevisionId,
         body: '# Juniper\n\nNew revision',
@@ -1842,7 +1842,7 @@ test('discovery, archive lifecycle and notifications respect current access thro
     });
     assert.equal(
       (await json('/notifications', undefined, readerHeaders)).items.some(
-        (n: any) => n.documentId === doc.id,
+        (n: any) => n.artifactId === doc.id,
       ),
       false,
     );
@@ -1972,7 +1972,7 @@ test('workspace service identities use real MCP, survive creator offboarding, an
       f.store.serviceAccounts(f.owner, f.workspace.id)[0].tokens[0].lastUsedAt,
     );
     const created = await client.callTool({
-      name: 'create_document',
+      name: 'create_artifact',
       arguments: {
         workspaceId: f.workspace.id,
         path: 'automation.md',
@@ -1986,7 +1986,7 @@ test('workspace service identities use real MCP, survive creator offboarding, an
     assert.equal(
       (
         await request(
-          `/documents/${doc.id}/reviews`,
+          `/artifacts/${doc.id}/reviews`,
           { expectedRevisionId: doc.currentRevisionId, decision: 'approved' },
           agentHeaders as any,
         )
@@ -2014,8 +2014,8 @@ test('workspace service identities use real MCP, survive creator offboarding, an
     assert.equal(
       (
         await client.callTool({
-          name: 'read_document',
-          arguments: { documentId: doc.id },
+          name: 'read_artifact',
+          arguments: { artifactId: doc.id },
         })
       ).isError,
       undefined,
@@ -2026,7 +2026,7 @@ test('workspace service identities use real MCP, survive creator offboarding, an
       200,
     );
     assert.equal(
-      (await request(`/documents/${doc.id}`, undefined, agentHeaders as any))
+      (await request(`/artifacts/${doc.id}`, undefined, agentHeaders as any))
         .status,
       401,
     );
@@ -2049,6 +2049,211 @@ test('workspace service identities use real MCP, survive creator offboarding, an
       ).status,
       404,
     );
+  } finally {
+    await client.close();
+    await f.close();
+  }
+});
+
+test('folder changes cross HTTP and MCP atomically, preserve links, and enforce scope and stale snapshots', async () => {
+  const f = await fixture();
+  const client = new Client({ name: 'folder-integration', version: '1' });
+  try {
+    const key = f.store.createToken(f.owner, f.workspace.id, {
+      name: 'Folder editor',
+      scope: 'write',
+    });
+    const headers = { Authorization: `Bearer ${key.token}` };
+    const request = async (path: string, data?: unknown, method = 'POST') =>
+      f.request(path, {
+        headers,
+        method,
+        ...(data === undefined ? {} : { body: JSON.stringify(data) }),
+      });
+    const create = async (path: string, data: unknown) => {
+      const r = await request(path, data);
+      assert.equal(r.status, 201, await r.clone().text());
+      return r.json();
+    };
+    const parent = await create(`/api/workspaces/${f.workspace.id}/folders`, {
+      name: 'Plans',
+    });
+    const nested = await create(`/api/workspaces/${f.workspace.id}/folders`, {
+      name: 'Launch',
+      parentId: parent.id,
+    });
+    const archive = await create(`/api/workspaces/${f.workspace.id}/folders`, {
+      name: 'Archive',
+    });
+    const doc = await create('/api/artifacts', {
+      workspaceId: f.workspace.id,
+      path: 'Plans/Launch/proposal.md',
+      body: '# Proposal',
+    });
+    const source = await create('/api/artifacts', {
+      workspaceId: f.workspace.id,
+      path: 'index.md',
+      body: '[Proposal](Plans/Launch/proposal.md)',
+    });
+    const snapshot = () => f.store.catalog(f.owner, f.workspace.id);
+    const change = (catalog: ReturnType<typeof snapshot>, extra = {}) => ({
+      workspaceId: f.workspace.id,
+      folderId: parent.id,
+      expectedCatalogVersion: catalog.version,
+      expectedArtifacts: catalog.artifacts
+        .filter((a) => a.id === doc.id)
+        .map((a) => ({
+          id: a.id,
+          expectedRevisionId: a.currentRevisionId,
+          expectedMetadataVersion: a.metadataVersion,
+        })),
+      ...extra,
+    });
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), {
+        requestInit: { headers },
+      }),
+    );
+    const stale = snapshot();
+    const newer = f.store.updateArtifact(f.owner, {
+      artifactId: doc.id,
+      expectedRevisionId: doc.currentRevisionId,
+      body: '# Revised',
+    });
+    let result = await client.callTool({
+      name: 'change_folder',
+      arguments: change(stale, { name: 'Decisions' }),
+    });
+    assert.equal(result.isError, true);
+    assert.match(JSON.stringify(result), /revision_conflict/);
+    assert.equal(
+      f.store.artifact(f.owner, doc.id).path,
+      'Plans/Launch/proposal.md',
+    );
+    assert.equal(
+      (
+        await request(
+          `/api/workspaces/${f.workspace.id}/folders/${parent.id}`,
+          change(snapshot(), { parentId: nested.id }),
+          'PATCH',
+        )
+      ).status,
+      400,
+    );
+    // A destination already used by another artifact's history must roll back the whole move.
+    const conflict = await create('/api/artifacts', {
+      workspaceId: f.workspace.id,
+      path: 'Decisions/Launch/proposal.md',
+      body: '# Taken',
+    });
+    result = await client.callTool({
+      name: 'change_folder',
+      arguments: change(snapshot(), { name: 'Decisions' }),
+    });
+    assert.equal(result.isError, true);
+    assert.equal(
+      snapshot().folders.find((x) => x.id === parent.id)!.name,
+      'Plans',
+    );
+    assert.equal(
+      f.store.artifact(f.owner, conflict.id).path,
+      'Decisions/Launch/proposal.md',
+    );
+    const before = snapshot();
+    result = await client.callTool({
+      name: 'change_folder',
+      arguments: change(before, { name: 'Approved', parentId: archive.id }),
+    });
+    assert.notEqual(result.isError, true, JSON.stringify(result));
+    const moved = f.store.artifact(f.owner, doc.id);
+    assert.equal(moved.path, 'Archive/Approved/Launch/proposal.md');
+    assert.equal(moved.folderId, nested.id);
+    assert.equal(moved.currentRevisionId, newer.currentRevisionId);
+    assert.equal(moved.metadataVersion, doc.metadataVersion + 1);
+    assert.equal(
+      f.store.resolveLink(f.owner, source.id, {
+        revisionId: source.currentRevisionId,
+        href: 'Plans/Launch/proposal.md',
+      }).artifactId,
+      doc.id,
+    );
+    assert.equal(
+      (
+        await request(
+          `/api/workspaces/${f.workspace.id}/folders/${parent.id}`,
+          change(before, { name: 'Old snapshot' }),
+          'PATCH',
+        )
+      ).status,
+      409,
+    );
+    assert.equal(
+      (
+        await request(
+          `/api/workspaces/${f.workspace.id}/folders/${parent.id}`,
+          change(snapshot(), { remove: true }),
+          'PATCH',
+        )
+      ).status,
+      409,
+    );
+    // Old REST URLs keep their old response field spelling while canonical URLs use artifacts.
+    const legacy = await (
+      await request(`/api/documents/${doc.id}`, undefined, 'GET')
+    ).json();
+    assert.equal(legacy.revision.documentId, doc.id);
+    assert.equal(legacy.revision.artifactId, undefined);
+    const other = f.store.createWorkspace(f.owner, {
+      name: 'Outside key scope',
+    });
+    assert.equal(
+      (
+        await request(`/api/workspaces/${other.id}/folders`, {
+          name: 'Forbidden',
+        })
+      ).status,
+      404,
+    );
+    const read = f.store.createToken(f.owner, f.workspace.id, {
+      name: 'Reader',
+      scope: 'read',
+    });
+    assert.equal(
+      (
+        await f.request(`/api/workspaces/${f.workspace.id}/folders`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${read.token}` },
+          body: JSON.stringify({ name: 'Forbidden' }),
+        })
+      ).status,
+      403,
+    );
+    const empty = await create(`/api/workspaces/${f.workspace.id}/folders`, {
+      name: 'Empty',
+    });
+    assert.equal(
+      (
+        await request(
+          `/api/workspaces/${f.workspace.id}/folders/${empty.id}`,
+          { expectedCatalogVersion: snapshot().version, remove: true },
+          'PATCH',
+        )
+      ).status,
+      200,
+    );
+    assert.ok(
+      f.store
+        .auditLog(f.owner)
+        .entries.some((a) => a.action === 'folder.updated'),
+    );
+    const reopened = new Store(f.filename);
+    assert.equal(reopened.artifact(f.owner, doc.id).folderId, nested.id);
+    assert.ok(
+      reopened
+        .catalog(f.owner, f.workspace.id)
+        .folders.some((x) => x.id === parent.id),
+    );
+    reopened.close();
   } finally {
     await client.close();
     await f.close();

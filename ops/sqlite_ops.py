@@ -47,7 +47,8 @@ def db_check(path):
         if db.execute('PRAGMA foreign_key_check').fetchone():
             raise RuntimeError(f'SQLite foreign key check failed: {path}')
         # Catch accidentally selected empty/unrelated databases before touching live data.
-        for table in ('users', 'documents', 'revisions', 'comments', 'reviews'):
+        artifact_table = 'artifacts' if db.execute('PRAGMA user_version').fetchone()[0] >= 12 else 'documents'
+        for table in ('users', artifact_table, 'revisions', 'comments', 'reviews'):
             db.execute(f'SELECT count(*) FROM {table}').fetchone()
         return db.execute('PRAGMA user_version').fetchone()[0]
 

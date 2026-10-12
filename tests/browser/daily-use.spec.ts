@@ -1,3 +1,5 @@
+import { openSettings, manageArtifact } from './controls';
+import { choose } from './controls';
 import { test, expect, type APIRequestContext } from '@playwright/test';
 
 test.use({ actionTimeout: 15000 });
@@ -32,15 +34,18 @@ test('people discover content across workspaces, manage its lifecycle, receive r
   const first = await send(page.request, '/workspaces', {
     name: 'Daily planning',
   });
+  await send(page.request, `/workspaces/${first.id}/folders`, {
+    name: 'decisions',
+  });
   const second = await send(page.request, '/workspaces', {
     name: 'Daily research',
   });
-  const doc = await send(page.request, '/documents', {
+  const doc = await send(page.request, '/artifacts', {
     workspaceId: first.id,
     path: 'plans/launch.md',
     body: '# Launch\n\nThe quetzal launch is ready for review.',
   });
-  const otherDoc = await send(page.request, '/documents', {
+  const otherDoc = await send(page.request, '/artifacts', {
     workspaceId: second.id,
     path: 'research.md',
     body: '# Research\n\nQuetzal research findings.',
@@ -65,12 +70,12 @@ test('people discover content across workspaces, manage its lifecycle, receive r
     );
     await send(peer.request, '/invitations/accept', { token: invite2.token });
     for (const d of [doc, otherDoc])
-      await send(peer.request, `/documents/${d.id}/review-requests`, {
+      await send(peer.request, `/artifacts/${d.id}/review-requests`, {
         expectedRevisionId: d.currentRevisionId,
         reviewerId: user.id,
         message: 'Check this daily plan',
       });
-    const comment = await send(page.request, `/documents/${doc.id}/comments`, {
+    const comment = await send(page.request, `/artifacts/${doc.id}/comments`, {
       revisionId: doc.currentRevisionId,
       body: 'Please check the schedule',
     });
@@ -79,67 +84,74 @@ test('people discover content across workspaces, manage its lifecycle, receive r
     });
     await page.goto(`/?workspace=${first.id}`);
     await page.getByRole('button', { name: 'Search', exact: true }).click();
-    const search = page.getByRole('dialog', { name: 'Search documents' });
+    const search = page.getByRole('dialog', { name: 'Search artifacts' });
     await search.getByLabel('Search saved content and paths').fill('quetzal');
     await expect(search.locator('.search-result')).toHaveCount(2);
-    await search
-      .getByLabel('Workspace', { exact: true })
-      .selectOption(second.id);
+    await choose(
+      search.getByLabel('Workspace', { exact: true }),
+      'Daily research',
+    );
     await expect(search.locator('.search-result')).toHaveCount(1);
-    await search.getByRole('button', { name: /research.md/ }).click();
-    await expect(page).toHaveURL(new RegExp(`document=${otherDoc.id}`));
+    await search.getByRole('button', { name: /Research/ }).click();
+    await expect(page).toHaveURL(new RegExp(`artifact=${otherDoc.id}`));
     await page.getByRole('button', { name: 'My reviews', exact: true }).click();
     const queue = page.locator('.review-queue');
     await expect(
-      queue.getByText('Daily planning / plans/launch.md'),
+      queue.getByRole('button', {
+        name: 'Open requested revision of plans/launch.md',
+      }),
     ).toBeVisible();
-    await expect(queue.getByText('Daily research / research.md')).toBeVisible();
-    await queue.getByLabel('Filter workspace').selectOption(first.id);
-    await expect(queue.locator('.request-card')).toHaveCount(1);
+    await expect(
+      queue.getByRole('button', {
+        name: 'Open requested revision of research.md',
+      }),
+    ).toBeVisible();
+    await choose(queue.getByLabel('Filter workspace'), 'Daily planning');
+    await expect(queue.locator('.request-row')).toHaveCount(1);
     await queue
-      .getByRole('button', { name: 'Open requested revision' })
+      .getByRole('button', {
+        name: 'Open requested revision of plans/launch.md',
+      })
       .click();
-    await page
-      .getByRole('button', { name: 'Manage document', exact: true })
-      .click();
-    const management = page.getByRole('dialog', { name: 'Manage document' });
-    await management.getByLabel('Document path').fill('decisions/release.md');
-    await management.getByRole('button', { name: 'Save path' }).click();
-    await expect(page.locator('.breadcrumb')).toContainText(
-      'decisions/release.md',
-    );
-    await page
-      .getByRole('button', { name: 'Manage document', exact: true })
-      .click();
+    await manageArtifact(page);
+    const management = page.getByRole('dialog', { name: 'Manage artifact' });
+    await management.getByLabel('Artifact name').fill('release');
+    await choose(management.getByLabel('Folder', { exact: true }), 'decisions');
+    await management.getByRole('button', { name: 'Save changes' }).click();
+    await expect(page.locator('.breadcrumb')).toContainText('decisions');
+    await manageArtifact(page);
     await management
-      .getByRole('button', { name: 'Archive document', exact: true })
+      .getByRole('button', { name: 'Archive artifact', exact: true })
       .click();
     await expect(page.locator('.archive-banner')).toContainText('read-only');
     await expect(
       page.getByRole('button', { name: 'Edit', exact: true }),
     ).toHaveCount(0);
     await page
-      .getByRole('button', { name: 'All documents', exact: false })
+      .getByRole('button', { name: 'All artifacts', exact: false })
       .click();
     await expect(
       page
-        .getByRole('navigation', { name: 'Workspace documents' })
+        .getByRole('navigation', { name: 'Workspace artifacts' })
         .getByRole('button', { name: /release.md/ }),
     ).toHaveCount(0);
-    await page.getByLabel('Show archived').check();
     await page
-      .getByRole('navigation', { name: 'Workspace documents' })
+      .getByRole('button', { name: 'Artifact navigation options', exact: true })
+      .click();
+    await page
+      .getByRole('button', { name: 'Show archived artifacts', exact: true })
+      .click();
+    await page
+      .getByRole('navigation', { name: 'Workspace artifacts' })
       .getByRole('button', { name: /release.md/ })
       .click();
-    await page
-      .getByRole('button', { name: 'Manage document', exact: true })
-      .click();
+    await manageArtifact(page);
     await management
-      .getByRole('button', { name: 'Unarchive document', exact: true })
+      .getByRole('button', { name: 'Unarchive artifact', exact: true })
       .click();
     await expect(page.locator('.archive-banner')).toHaveCount(0);
     await page.getByRole('button', { name: /^Notifications/ }).click();
-    const notifications = page.getByRole('dialog', {
+    const notifications = page.getByRole('region', {
       name: 'Notifications',
       exact: true,
     });
@@ -155,11 +167,11 @@ test('people discover content across workspaces, manage its lifecycle, receive r
       .getByRole('button', { name: 'Mark all as read' })
       .click();
     await expect(notifications.locator('.unread')).toHaveCount(0);
-    await notifications.getByRole('button', { name: 'Close dialog' }).click();
-    await page
-      .getByRole('button', { name: 'Agent access', exact: true })
+    await notifications
+      .getByRole('button', { name: '← Back to workspace' })
       .click();
-    const access = page.getByRole('dialog', { name: 'Connect your agent' });
+    await openSettings(page, 'Agent access');
+    const access = page.getByRole('region', { name: 'Connect your agent' });
     await access
       .getByLabel('Agent name', { exact: true })
       .fill('Personal planning');
@@ -180,7 +192,10 @@ test('people discover content across workspaces, manage its lifecycle, receive r
       /^Bearer pw_/,
     );
     await access.getByLabel('Service account name').fill('Company pipeline');
-    await access.getByLabel('Maximum access').selectOption('write');
+    await choose(
+      access.getByLabel('Maximum access'),
+      'Read, edit, and comment',
+    );
     await access
       .getByRole('button', { name: 'Create service account', exact: true })
       .click();
@@ -188,7 +203,7 @@ test('people discover content across workspaces, manage its lifecycle, receive r
       name: 'Service account Company pipeline',
     });
     await account.getByLabel('Service key name').fill('Pipeline runner');
-    await account.getByLabel('Key access').selectOption('write');
+    await choose(account.getByLabel('Key access'), 'Read, edit, and comment');
     await account
       .getByRole('button', { name: 'Create service key', exact: true })
       .click();
@@ -213,12 +228,11 @@ test('people discover content across workspaces, manage its lifecycle, receive r
       .getByRole('button', { name: 'Check connection', exact: true })
       .click();
     await expect(access.getByRole('alert')).toContainText('valid agent key');
-    await access.getByRole('button', { name: 'Close dialog' }).click();
+    await access.getByRole('button', { name: '← Back to workspace' }).click();
     await page.setViewportSize({ width: 390, height: 844 });
     await page
-      .getByRole('button', { name: 'Collapse sidebar', exact: true })
+      .getByRole('button', { name: 'Search artifacts', exact: true })
       .click();
-    await page.getByRole('button', { name: 'Search', exact: true }).click();
     await search.getByLabel('Search saved content and paths').fill('quetzal');
     await expect(search.locator('.search-result')).toHaveCount(2);
     await page.screenshot({

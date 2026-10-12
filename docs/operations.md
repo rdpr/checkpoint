@@ -31,7 +31,7 @@ docker compose exec app python3 ops/container.py verify-backup /backups/manual-T
 
 A restore drill starts the actual application against a temporary database copy and checks integrity, HTTP health and frontend assets. It never replaces live data. Keep space on the data volume for another database copy and migration growth.
 
-Backups contain documents, attachments, discussions, reviews, account information and hashed credentials. Store them with restricted access. Local volumes and Kubernetes PVCs are not off-host protection: copy verified backups to your chosen independent destination and test restoration on another machine. Browser-local drafts are not included.
+Backups contain artifacts, attachments, discussions, reviews, account information and hashed credentials. Store them with restricted access. Local volumes and Kubernetes PVCs are not off-host protection: copy verified backups to your chosen independent destination and test restoration on another machine. Browser-local drafts are not included.
 
 ## Explicit upgrades
 
@@ -50,6 +50,17 @@ docker compose up -d backup
 The launcher checks schema compatibility before starting the application. Before migrating an older schema, it saves a rescue backup and boots the candidate on a disposable clone. A database newer than the image is refused. A failed portable upgrade requires operator intervention; there is no automatic rollback that could silently discard new writes.
 
 For Kubernetes, take and verify a backup through the app container, update the image/chart in private values, and run `helm upgrade`. Do not run multiple application replicas during the transition. Watch rollout and readiness before resuming normal use.
+
+### Upgrading from 0.1.0 to 0.2.0
+
+Version 0.2.0 migrates schema 11 to 12. Existing artifact paths populate persistent folders, including archived contents. Artifact IDs, revision history, discussions, reviews, memberships and existing links are retained. The migration also renames the internal document tables and rebuilds the artifact search index.
+
+1. Take a backup with 0.1.0 and verify it with that release. Retain the backup and the old image digest together.
+2. Follow the explicit upgrade procedure above. The candidate verifies migration on a private database copy before opening the live database.
+3. Check `/readyz` and `/api/health` (version `0.2.0`, maintenance disabled), then verify sign-in, an existing artifact, its history, folder navigation and search. Check the backup job after upgrading and verify a new backup with 0.2.0.
+4. Reload browser tabs to load the new UI. Refresh MCP clients' tool discovery; see [API and MCP compatibility](mcp.md#artifacts-and-folders). Browser-local drafts are retained but still depend on the same browser profile and origin.
+
+A 0.1.0 image cannot open schema 12. To roll back, stop writers and restore the retained schema 11 backup with its matching image using the procedure below. This also rolls back any changes made since the backup; preserve newer work first. Never modify schema numbers or tables manually to bypass the check.
 
 ## Rollback and restore
 

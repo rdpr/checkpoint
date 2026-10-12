@@ -1,6 +1,18 @@
+import { artifactLocation } from './api';
+import { createPortal } from 'react-dom';
+import { MoreHorizontal } from 'lucide-react';
+import { Select } from './Select';
 import { useEffect, useState } from 'react';
 import type { ReviewRequest, Reviewer, Revision, User } from '../shared/types';
-import { api, post, dateLabel, errorText } from './api';
+import {
+  api,
+  post,
+  dateLabel,
+  errorText,
+  initials,
+  artifactLabel,
+  relativeDate,
+} from './api';
 import { ErrorMessage, Loading, Modal } from './ui';
 import { useReviewDraft } from './useReviewDraft';
 
@@ -8,7 +20,7 @@ function requestLabel(r: ReviewRequest) {
   if (r.status === 'waiting')
     return r.outdated ? 'Outdated · awaiting renewal' : 'Waiting for review';
   return {
-    document_archived: 'Document archived',
+    artifact_archived: 'Artifact archived',
     approved: 'Approved',
     changes_requested: 'Changes requested',
     cancelled: 'Cancelled',
@@ -19,7 +31,7 @@ function requestLabel(r: ReviewRequest) {
 
 function useRequests(
   workspaceId: string,
-  documentId?: string,
+  artifactId?: string,
   refreshKey?: number,
 ) {
   const [requests, setRequests] = useState<ReviewRequest[]>([]);
@@ -31,8 +43,8 @@ function useRequests(
     const load = async () => {
       try {
         const next = await api<ReviewRequest[]>(
-          documentId
-            ? `/documents/${documentId}/review-requests`
+          artifactId
+            ? `/artifacts/${artifactId}/review-requests`
             : workspaceId
               ? `/workspaces/${workspaceId}/review-requests`
               : '/my-reviews',
@@ -58,7 +70,7 @@ function useRequests(
       active = false;
       clearInterval(timer);
     };
-  }, [workspaceId, documentId, refreshKey, generation]);
+  }, [workspaceId, artifactId, refreshKey, generation]);
   return { requests, error, loading, refresh: () => refresh((n) => n + 1) };
 }
 
@@ -97,8 +109,8 @@ export function RequestCard({
     >
       <div className="request-heading">
         <strong>
-          {r.workspaceName ? `${r.workspaceName} / ` : ''}
-          {r.path}
+          {r.workspaceName ? `${r.workspaceName} › ` : ''}
+          {artifactLocation(r.path)}
         </strong>
         <span className="pill">{requestLabel(r)}</span>
       </div>
@@ -121,7 +133,7 @@ export function RequestCard({
       {r.message && <p className="request-message">{r.message}</p>}
       {r.outdated && (
         <p className="anchor-note">
-          The document has newer changes. This request still refers to revision{' '}
+          The artifact has newer changes. This request still refers to revision{' '}
           {r.revisionNumber}.
         </p>
       )}
@@ -190,8 +202,9 @@ export function MyReviews({
   onOpen: (r: ReviewRequest) => void;
 }) {
   const { requests, error, loading, refresh } = useRequests(workspaceId);
-  const [tab, setTab] = useState<'waiting' | 'requested'>('waiting');
-  const [history, setHistory] = useState(false);
+  const [tab, setTab] = useState<'waiting' | 'requested' | 'completed'>(
+    'waiting',
+  );
   const [filter, setFilter] = useState('');
   const waiting = requests.filter(
     (r) => r.reviewerId === user.id && r.status === 'waiting',
@@ -200,25 +213,34 @@ export function MyReviews({
     .filter((r) => !filter || r.workspaceId === filter)
     .filter((r) =>
       tab === 'waiting'
-        ? r.reviewerId === user.id && (history || r.status === 'waiting')
-        : r.requesterId === user.id &&
-          (history || !['cancelled', 'superseded'].includes(r.status)),
+        ? r.reviewerId === user.id && r.status === 'waiting'
+        : tab === 'requested'
+          ? r.requesterId === user.id &&
+            ['waiting', 'reviewer_unavailable'].includes(r.status)
+          : (r.reviewerId === user.id || r.requesterId === user.id) &&
+            !['waiting', 'reviewer_unavailable'].includes(r.status),
     );
   return (
     <section className="workspace-home review-queue">
       <div className="home-title">
         <div>
-          <span className="eyebrow">ACROSS YOUR WORKSPACES</span>
-          <h1>
-            My reviews<span>.</span>
-          </h1>
-          <p>Review the requested revision. Keep each round’s outcome.</p>
+          <h1>My reviews</h1>
+          <p>
+            {waiting.length
+              ? `${waiting.length} ${waiting.length === 1 ? 'review is' : 'reviews are'} waiting on you.`
+              : 'You’re up to date.'}{' '}
+            Across all your workspaces.
+          </p>
         </div>
       </div>
       <div className="queue-controls">
         <label>
-          Filter workspace
-          <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+          <span className="sr-only">Filter workspace</span>
+          <Select
+            searchable
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          >
             <option value="">All workspaces</option>
             {[
               ...new Map(
@@ -229,51 +251,105 @@ export function MyReviews({
                 {name}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
-        <div className="segmented" aria-label="Review queue">
+        <div className="queue-tabs" aria-label="Review queue">
           <button
+            aria-pressed={tab === 'waiting'}
             className={tab === 'waiting' ? 'active' : ''}
             onClick={() => setTab('waiting')}
           >
-            Waiting on me ({waiting.length})
+            Waiting on me <span>{waiting.length}</span>
           </button>
           <button
+            aria-pressed={tab === 'requested'}
             className={tab === 'requested' ? 'active' : ''}
             onClick={() => setTab('requested')}
           >
             Requested by me
           </button>
+          <button
+            aria-pressed={tab === 'completed'}
+            className={tab === 'completed' ? 'active' : ''}
+            onClick={() => setTab('completed')}
+          >
+            Completed
+          </button>
         </div>
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={history}
-            onChange={(e) => setHistory(e.target.checked)}
-          />
-          Include completed and closed rounds
-        </label>
       </div>
       <ErrorMessage message={error} />
       {loading ? (
         <Loading label="Loading review requests…" />
       ) : visible.length ? (
         <div className="request-list">
+          <div className="request-table-heading" aria-hidden="true">
+            <span>Artifact</span>
+            <span>Review state</span>
+            <span>{tab === 'waiting' ? 'Requested by' : 'Reviewer'}</span>
+            <span>Requested</span>
+            <span />
+          </div>
           {visible.map((r) => (
-            <RequestCard
-              key={r.id}
-              request={r}
-              onOpen={onOpen}
-              onChanged={refresh}
-            />
+            <div className="request-row" key={r.id}>
+              <button
+                onClick={() => onOpen(r)}
+                aria-label={`Open requested revision of ${r.path}`}
+              >
+                <strong>{artifactLabel(r.path)}</strong>
+                <small>
+                  {r.workspaceName} › {artifactLocation(r.path)}
+                </small>
+              </button>
+              <span
+                className={`pill request-state state-${r.outdated && r.status === 'waiting' ? 'outdated' : r.status}`}
+              >
+                {requestLabel(r)}
+              </span>
+              <span className="request-person">
+                <span className="avatar">
+                  {initials(
+                    tab === 'waiting'
+                      ? (r.agentName ?? r.requesterName)
+                      : r.reviewerName,
+                  )}
+                </span>
+                <small>
+                  {tab === 'waiting'
+                    ? (r.agentName ?? r.requesterName)
+                    : r.reviewerName}{' '}
+                  · r{r.revisionNumber}
+                </small>
+              </span>
+              <time dateTime={r.createdAt} title={dateLabel(r.createdAt)}>
+                {relativeDate(r.createdAt)}
+              </time>
+              <details>
+                <summary
+                  aria-label="Request details and actions"
+                  title="Request details and actions"
+                >
+                  <MoreHorizontal size={18} />
+                </summary>
+                <RequestCard request={r} onOpen={onOpen} onChanged={refresh} />
+              </details>
+            </div>
           ))}
+          <div className="request-table-footer">
+            <span>
+              {visible.length} {visible.length === 1 ? 'request' : 'requests'}
+            </span>
+          </div>
         </div>
       ) : (
         !error && (
-          <p className="muted">
-            {tab === 'waiting'
-              ? 'No reviews waiting on you.'
-              : 'No review requests from you yet.'}
+          <p className="list-empty">
+            {filter
+              ? 'No review requests match this workspace filter.'
+              : tab === 'waiting'
+                ? 'You’re caught up. No reviews waiting on you.'
+                : tab === 'completed'
+                  ? 'No completed review rounds yet.'
+                  : 'No review requests from you yet.'}
           </p>
         )
       )}
@@ -281,8 +357,9 @@ export function MyReviews({
   );
 }
 
-export function DocumentRequests({
-  documentId,
+export function ArtifactRequests({
+  contextTarget,
+  artifactId,
   user,
   onReadLatest,
   workspaceId,
@@ -292,7 +369,8 @@ export function DocumentRequests({
   refreshKey,
   onOpen,
 }: {
-  documentId: string;
+  contextTarget?: HTMLElement | null;
+  artifactId: string;
   user: User;
   onReadLatest: () => void;
   workspaceId: string;
@@ -304,14 +382,14 @@ export function DocumentRequests({
 }) {
   const { requests, error, refresh } = useRequests(
     workspaceId,
-    documentId,
+    artifactId,
     refreshKey,
   );
   const [draft, setDraft, storageError] = useReviewDraft<{
     revision: Pick<Revision, 'id' | 'number'>;
     reviewerId: string;
     message: string;
-  } | null>(`pw-request-draft:${user.id}:${documentId}`, null);
+  } | null>(`pw-request-draft:${user.id}:${artifactId}`, null);
   const [formOpen, setFormOpen] = useState(false);
   const [reviewers, setReviewers] = useState<Reviewer[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
@@ -335,8 +413,31 @@ export function DocumentRequests({
       setFormError(errorText(e));
     }
   }
+  const context = requests.find(
+    (r) =>
+      r.reviewerId === user.id &&
+      r.revisionId === revision.id &&
+      r.status === 'waiting',
+  );
   return (
-    <section className="document-requests" aria-label="Review requests">
+    <section className="artifact-requests" aria-label="Review requests">
+      {contextTarget &&
+        context &&
+        createPortal(
+          <div className="review-invitation">
+            <span className="avatar">
+              {initials(context.agentName ?? context.requesterName)}
+            </span>
+            <div>
+              <strong>
+                {context.agentName ?? context.requesterName} requested your
+                review.
+              </strong>
+              {context.message && <p>“{context.message}”</p>}
+            </div>
+          </div>,
+          contextTarget,
+        )}
       <div className="request-heading">
         <button
           className="text-button"
@@ -364,7 +465,7 @@ export function DocumentRequests({
               />
             ))
           ) : (
-            <p className="muted">No review requests for this document.</p>
+            <p className="muted">No review requests for this artifact.</p>
           )}
         </div>
       )}
@@ -384,7 +485,7 @@ export function DocumentRequests({
               setBusy(true);
               setFormError(null);
               try {
-                await post(`/documents/${documentId}/review-requests`, {
+                await post(`/artifacts/${artifactId}/review-requests`, {
                   expectedRevisionId: draft.revision.id,
                   reviewerId: draft.reviewerId,
                   message: draft.message,
@@ -409,7 +510,8 @@ export function DocumentRequests({
             <p>Request a review of revision {draft.revision.number}.</p>
             <label>
               Reviewer
-              <select
+              <Select
+                searchable
                 aria-label="Reviewer"
                 required
                 disabled={busy}
@@ -427,7 +529,7 @@ export function DocumentRequests({
                     {r.role === 'owner' ? ' (owner)' : ''}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <label>
               Review message (optional)

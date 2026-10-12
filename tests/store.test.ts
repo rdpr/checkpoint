@@ -1,3 +1,4 @@
+import { legacyNames } from './legacy-schema.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -17,15 +18,15 @@ async function fixture() {
   const store = new Store(':memory:');
   const owner: Actor = { user: await store.setup(ownerInput) };
   const workspace = store.workspaces(owner)[0];
-  const document = store.document(
+  const artifact = store.artifact(
     owner,
-    store.documents(owner, workspace.id)[0].id,
+    store.artifacts(owner, workspace.id)[0].id,
   );
-  return { store, owner, workspace, document };
+  return { store, owner, workspace, artifact };
 }
 
 test('two editors and an agent cannot overwrite a newer revision; restore preserves history', async () => {
-  const { store, owner, workspace, document } = await fixture();
+  const { store, owner, workspace, artifact } = await fixture();
   try {
     const invitation = store.invite(owner, workspace.id, { role: 'editor' });
     const editor = {
@@ -41,23 +42,23 @@ test('two editors and an agent cannot overwrite a newer revision; restore preser
       scope: 'write',
     });
     const agent = store.tokenActor(key.token)!;
-    const second = store.updateDocument(owner, {
-      documentId: document.id,
-      expectedRevisionId: document.currentRevisionId,
+    const second = store.updateArtifact(owner, {
+      artifactId: artifact.id,
+      expectedRevisionId: artifact.currentRevisionId,
       body: '# Revised\n\nNew scope.',
     });
     for (const actor of [editor, agent])
       assert.throws(
         () =>
-          store.updateDocument(actor, {
-            documentId: document.id,
-            expectedRevisionId: document.currentRevisionId,
+          store.updateArtifact(actor, {
+            artifactId: artifact.id,
+            expectedRevisionId: artifact.currentRevisionId,
             body: 'stale write',
           }),
         fails('revision_conflict'),
       );
-    const third = store.updateDocument(agent, {
-      documentId: document.id,
+    const third = store.updateArtifact(agent, {
+      artifactId: artifact.id,
       expectedRevisionId: second.currentRevisionId,
       body: '# Agent contribution',
     });
@@ -66,32 +67,32 @@ test('two editors and an agent cannot overwrite a newer revision; restore preser
     assert.throws(
       () =>
         store.restore(owner, {
-          documentId: document.id,
+          artifactId: artifact.id,
           expectedRevisionId: second.currentRevisionId,
-          revisionId: document.currentRevisionId,
+          revisionId: artifact.currentRevisionId,
         }),
       fails('revision_conflict'),
     );
     const restored = store.restore(editor, {
-      documentId: document.id,
+      artifactId: artifact.id,
       expectedRevisionId: third.currentRevisionId,
-      revisionId: document.currentRevisionId,
+      revisionId: artifact.currentRevisionId,
     });
     assert.equal(restored.revision.number, 4);
-    assert.equal(restored.revision.body, document.revision.body);
-    assert.equal(restored.revision.restoredFrom, document.currentRevisionId);
+    assert.equal(restored.revision.body, artifact.revision.body);
+    assert.equal(restored.revision.restoredFrom, artifact.currentRevisionId);
     assert.equal(
-      store.revision(owner, document.id, second.currentRevisionId).body,
+      store.revision(owner, artifact.id, second.currentRevisionId).body,
       second.revision.body,
     );
-    assert.equal(store.revisions(owner, document.id).length, 4);
+    assert.equal(store.revisions(owner, artifact.id).length, 4);
   } finally {
     store.close();
   }
 });
 
 test('viewer access, scoped keys, cross-workspace IDs, revocation, and removal are enforced', async () => {
-  const { store, owner, workspace, document } = await fixture();
+  const { store, owner, workspace, artifact } = await fixture();
   try {
     const invitation = store.invite(owner, workspace.id, { role: 'viewer' });
     const viewer = {
@@ -102,21 +103,21 @@ test('viewer access, scoped keys, cross-workspace IDs, revocation, and removal a
         invitation: invitation.token,
       }),
     };
-    assert.equal(store.document(viewer, document.id).id, document.id);
+    assert.equal(store.artifact(viewer, artifact.id).id, artifact.id);
     assert.throws(
       () =>
         store.addComment(viewer, {
-          documentId: document.id,
-          revisionId: document.currentRevisionId,
+          artifactId: artifact.id,
+          revisionId: artifact.currentRevisionId,
           body: 'No',
         }),
       fails('read_only'),
     );
     assert.throws(
       () =>
-        store.updateDocument(viewer, {
-          documentId: document.id,
-          expectedRevisionId: document.currentRevisionId,
+        store.updateArtifact(viewer, {
+          artifactId: artifact.id,
+          expectedRevisionId: artifact.currentRevisionId,
           body: 'No',
         }),
       fails('read_only'),
@@ -130,7 +131,7 @@ test('viewer access, scoped keys, cross-workspace IDs, revocation, and removal a
       fails('read_only'),
     );
     const other = store.createWorkspace(owner, { name: 'Private' });
-    const otherDoc = store.createDocument(owner, {
+    const otherDoc = store.createArtifact(owner, {
       workspaceId: other.id,
       path: 'secret.md',
       body: 'Secret',
@@ -141,10 +142,10 @@ test('viewer access, scoped keys, cross-workspace IDs, revocation, and removal a
     });
     const agent = store.tokenActor(key.token)!;
     assert.equal(store.workspaces(agent).length, 1);
-    assert.throws(() => store.document(agent, otherDoc.id), fails('not_found'));
+    assert.throws(() => store.artifact(agent, otherDoc.id), fails('not_found'));
     assert.throws(
       () =>
-        store.createDocument(agent, {
+        store.createArtifact(agent, {
           workspaceId: workspace.id,
           path: 'new.md',
           body: '',
@@ -164,7 +165,7 @@ test('viewer access, scoped keys, cross-workspace IDs, revocation, and removal a
     store.removeMember(owner, workspace.id, viewer.user.id);
     assert.equal(store.tokenActor(viewerKey.token), undefined);
     assert.throws(
-      () => store.document(viewer, document.id),
+      () => store.artifact(viewer, artifact.id),
       fails('not_found'),
     );
   } finally {
@@ -173,18 +174,18 @@ test('viewer access, scoped keys, cross-workspace IDs, revocation, and removal a
 });
 
 test('comments keep their revision and quote through edits, replies and resolution', async () => {
-  const { store, owner, document } = await fixture();
+  const { store, owner, artifact } = await fixture();
   try {
     const comment = store.addComment(owner, {
-      documentId: document.id,
-      revisionId: document.currentRevisionId,
+      artifactId: artifact.id,
+      revisionId: artifact.currentRevisionId,
       body: 'Clarify this.',
       quote: 'shared place',
       anchor: { blockId: 'block-0', startOffset: 0, endOffset: 10 },
     });
-    store.updateDocument(owner, {
-      documentId: document.id,
-      expectedRevisionId: document.currentRevisionId,
+    store.updateArtifact(owner, {
+      artifactId: artifact.id,
+      expectedRevisionId: artifact.currentRevisionId,
       body: '# Completely changed',
     });
     store.reply(owner, { commentId: comment.id, body: 'Updated the plan.' });
@@ -194,9 +195,9 @@ test('comments keep their revision and quote through edits, replies and resoluti
       fails('thread_resolved'),
     );
     store.resolve(owner, { commentId: comment.id, resolved: false });
-    const saved = store.comments(owner, document.id)[0];
+    const saved = store.comments(owner, artifact.id)[0];
     assert.equal(saved.quote, 'shared place');
-    assert.equal(saved.revisionId, document.currentRevisionId);
+    assert.equal(saved.revisionId, artifact.currentRevisionId);
     assert.equal(saved.replies[0].body, 'Updated the plan.');
     assert.equal(saved.resolved, false);
   } finally {
@@ -204,35 +205,29 @@ test('comments keep their revision and quote through edits, replies and resoluti
   }
 });
 
-test('restart retains documents, revisions, comments, identities and revocations', async () => {
+test('restart retains artifacts, revisions, comments, identities and revocations', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pw-store-'));
   let store = new Store(join(directory, 'db.sqlite'));
   try {
     const owner = { user: await store.setup(ownerInput) };
     const workspace = store.workspaces(owner)[0],
-      doc = store.documents(owner, workspace.id)[0];
-    const updated = store.updateDocument(owner, {
-      documentId: doc.id,
+      doc = store.createArtifact(owner, {
+        workspaceId: workspace.id,
+        path: 'plans/nested/launch.md',
+        body: '# Legacy plan',
+      });
+    const updated = store.updateArtifact(owner, {
+      artifactId: doc.id,
       expectedRevisionId: doc.currentRevisionId,
       body: '# Durable\n\nContent',
     });
     store.addComment(owner, {
-      documentId: doc.id,
+      artifactId: doc.id,
       revisionId: updated.currentRevisionId,
       body: 'Still here.',
     });
-    // Recreate the v1 layout, as used by existing installations.
-    store.db.exec(`ALTER TABLE comments DROP COLUMN kind;
-      ALTER TABLE comments DROP COLUMN label_tip;
-      ALTER TABLE comments DROP COLUMN images;
-      ALTER TABLE comments DROP COLUMN version;
-      ALTER TABLE comments DROP COLUMN updated_at;
-      ALTER TABLE comments DROP COLUMN author_token_id;
-      ALTER TABLE comments DROP COLUMN diff;
-      DROP TABLE comment_submissions;
-      PRAGMA user_version=1;`);
     store.review(owner, {
-      documentId: doc.id,
+      artifactId: doc.id,
       expectedRevisionId: updated.currentRevisionId,
       decision: 'approved',
       note: 'Persist this decision.',
@@ -243,6 +238,17 @@ test('restart retains documents, revisions, comments, identities and revocations
       scope: 'read',
     });
     store.revokeToken(owner, workspace.id, token.id);
+    legacyNames(store.db);
+    // Recreate the v1 layout, as used by existing installations.
+    store.db.exec(`ALTER TABLE comments DROP COLUMN kind;
+      ALTER TABLE comments DROP COLUMN label_tip;
+      ALTER TABLE comments DROP COLUMN images;
+      ALTER TABLE comments DROP COLUMN version;
+      ALTER TABLE comments DROP COLUMN updated_at;
+      ALTER TABLE comments DROP COLUMN author_token_id;
+      ALTER TABLE comments DROP COLUMN diff;
+      DROP TABLE comment_submissions;
+      PRAGMA user_version=1;`);
     store.db
       .exec(`DROP TABLE revision_links; DROP TABLE document_paths; DROP TABLE notifications; DROP TABLE service_accounts;
       DROP TRIGGER document_search_update; DROP TRIGGER document_search_delete; DROP TABLE document_search;
@@ -259,6 +265,8 @@ test('restart retains documents, revisions, comments, identities and revocations
       ALTER TABLE invites DROP COLUMN created_by;`);
     store.close();
     store = new Store(join(directory, 'db.sqlite'));
+    assert.equal(store.catalog(owner, workspace.id).folders.length, 2);
+    assert.ok(store.artifact(owner, doc.id).folderId);
     assert.equal(store.sessionActor(session)?.user.id, owner.user.id);
     assert.equal(store.search(owner, { query: 'Durable' })[0].id, doc.id);
     assert.equal(store.organization(owner).isAdmin, true);
@@ -267,24 +275,24 @@ test('restart retains documents, revisions, comments, identities and revocations
       'owner',
     );
     assert.equal(
-      store.document(owner, doc.id).revision.body,
+      store.artifact(owner, doc.id).revision.body,
       '# Durable\n\nContent',
     );
     assert.equal(
-      store.document(owner, doc.id).reviews[0].note,
+      store.artifact(owner, doc.id).reviews[0].note,
       'Persist this decision.',
     );
     assert.equal(store.comments(owner, doc.id)[0].body, 'Still here.');
     assert.equal(store.comments(owner, doc.id)[0].kind, 'comment');
     assert.deepEqual(store.comments(owner, doc.id)[0].images, []);
     const deletion = store.addComment(owner, {
-      documentId: doc.id,
+      artifactId: doc.id,
       revisionId: updated.currentRevisionId,
       kind: 'deletion',
       quote: 'Content',
     });
     const label = store.addComment(owner, {
-      documentId: doc.id,
+      artifactId: doc.id,
       revisionId: updated.currentRevisionId,
       kind: 'label',
       quote: 'Durable',
@@ -350,8 +358,8 @@ test('invitations are single-use, revocable and expire; bootstrap can only happe
   }
 });
 
-test('invalid paths and cross-document revision references never create partial state', async () => {
-  const { store, owner, workspace, document } = await fixture();
+test('invalid paths and cross-artifact revision references never create partial state', async () => {
+  const { store, owner, workspace, artifact } = await fixture();
   try {
     for (const path of [
       '../plan.md',
@@ -361,7 +369,7 @@ test('invalid paths and cross-document revision references never create partial 
       'plan.html',
     ])
       assert.throws(() =>
-        store.createDocument(owner, {
+        store.createArtifact(owner, {
           workspaceId: workspace.id,
           path,
           body: 'bad',
@@ -369,14 +377,14 @@ test('invalid paths and cross-document revision references never create partial 
       );
     assert.throws(
       () =>
-        store.createDocument(owner, {
+        store.createArtifact(owner, {
           workspaceId: workspace.id,
-          path: document.path,
+          path: artifact.path,
           body: 'duplicate',
         }),
       fails('path_exists'),
     );
-    const other = store.createDocument(owner, {
+    const other = store.createArtifact(owner, {
       workspaceId: workspace.id,
       path: 'other.md',
       body: 'other',
@@ -384,8 +392,8 @@ test('invalid paths and cross-document revision references never create partial 
     assert.throws(
       () =>
         store.restore(owner, {
-          documentId: document.id,
-          expectedRevisionId: document.currentRevisionId,
+          artifactId: artifact.id,
+          expectedRevisionId: artifact.currentRevisionId,
           revisionId: other.currentRevisionId,
         }),
       fails('not_found'),
@@ -393,53 +401,53 @@ test('invalid paths and cross-document revision references never create partial 
     assert.throws(
       () =>
         store.addComment(owner, {
-          documentId: document.id,
+          artifactId: artifact.id,
           revisionId: other.currentRevisionId,
           body: 'mismatched',
         }),
       fails('not_found'),
     );
-    assert.equal(store.revisions(owner, document.id).length, 1);
-    assert.equal(store.documents(owner, workspace.id).length, 2);
+    assert.equal(store.revisions(owner, artifact.id).length, 1);
+    assert.equal(store.artifacts(owner, workspace.id).length, 2);
   } finally {
     store.close();
   }
 });
 
-test('relative document links keep identity through moves, edits, restore and database restart', async () => {
+test('relative artifact links keep identity through moves, edits, restore and database restart', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pw-links-'));
   const path = join(directory, 'workspace.sqlite');
   let store = new Store(path);
   try {
     const actor = { user: await store.setup(ownerInput) };
     const workspace = store.workspaces(actor)[0];
-    const source = store.createDocument(actor, {
+    const source = store.createArtifact(actor, {
       workspaceId: workspace.id,
       path: 'plans/source.md',
       body: '# Source\n\n[Target](target.md#details)',
     });
-    const target = store.createDocument(actor, {
+    const target = store.createArtifact(actor, {
       workspaceId: workspace.id,
       path: 'plans/target.md',
       body: '# Target',
     });
-    for (const [document, next] of [
+    for (const [artifact, next] of [
       [source, 'moved/source.md'],
       [target, 'moved/target.md'],
     ] as const)
-      store.changeDocument(actor, {
-        documentId: document.id,
-        expectedRevisionId: document.currentRevisionId,
-        expectedMetadataVersion: document.metadataVersion,
+      store.changeArtifact(actor, {
+        artifactId: artifact.id,
+        expectedRevisionId: artifact.currentRevisionId,
+        expectedMetadataVersion: artifact.metadataVersion,
         path: next,
       });
-    const updated = store.updateDocument(actor, {
-      documentId: source.id,
+    const updated = store.updateArtifact(actor, {
+      artifactId: source.id,
       expectedRevisionId: source.currentRevisionId,
       body: source.revision.body + '\n\nA new paragraph.',
     });
     const restored = store.restore(actor, {
-      documentId: source.id,
+      artifactId: source.id,
       expectedRevisionId: updated.currentRevisionId,
       revisionId: source.currentRevisionId,
     });
@@ -450,12 +458,12 @@ test('relative document links keep identity through moves, edits, restore and da
         revisionId: revision.currentRevisionId,
         href: 'target.md#details',
       });
-      assert.equal(resolved.documentId, target.id);
+      assert.equal(resolved.artifactId, target.id);
       assert.equal(resolved.fragment, 'details');
     }
     assert.throws(
       () =>
-        store.createDocument(actor, {
+        store.createArtifact(actor, {
           workspaceId: workspace.id,
           path: 'plans/target.md',
           body: '# Impostor',
@@ -487,6 +495,64 @@ test('relative document links keep identity through moves, edits, restore and da
         href: 'target.md#details',
       }),
     );
+  } finally {
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('schema 11 upgrade preserves nested paths, archived artifacts and lost-save receipts', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'checkpoint-artifact-upgrade-'));
+  const filename = join(directory, 'db.sqlite');
+  let store = new Store(filename);
+  try {
+    const owner = { user: await store.setup(ownerInput) };
+    const workspace = store.workspaces(owner)[0];
+    const artifact = store.createArtifact(owner, {
+      workspaceId: workspace.id,
+      path: 'plans/nested/proposal.md',
+      body: '# Durable artifact',
+    });
+    const input = {
+      artifactId: artifact.id,
+      revisionId: artifact.currentRevisionId,
+      body: 'Preserve this unsent acknowledgment.',
+      submissionId: crypto.randomUUID(),
+    };
+    const comment = store.addComment(owner, input);
+    // Schema 11 used the legacy property name in receipt fingerprints.
+    const { addComment } = await import('../server/schemas.ts');
+    const { digest } = await import('../server/security.ts');
+    const { legacyFields } = await import('../server/compatibility.ts');
+    store.run(
+      'UPDATE comment_submissions SET fingerprint=? WHERE submission_id=?',
+      digest(JSON.stringify(legacyFields(addComment.parse(input), true))),
+      input.submissionId,
+    );
+    const archived = store.createArtifact(owner, {
+      workspaceId: workspace.id,
+      path: 'plans/nested/archive.md',
+      body: '# Past decision',
+    });
+    store.changeArtifact(owner, {
+      artifactId: archived.id,
+      expectedRevisionId: archived.currentRevisionId,
+      expectedMetadataVersion: archived.metadataVersion,
+      archived: true,
+    });
+    legacyNames(store.db);
+    store.close();
+    store = new Store(filename);
+    const catalog = store.catalog(owner, workspace.id);
+    assert.deepEqual(catalog.folders.map((f) => f.name).sort(), [
+      'nested',
+      'plans',
+    ]);
+    assert.ok(store.artifact(owner, archived.id).archivedAt);
+    assert.equal(store.addComment(owner, input).id, comment.id);
+    assert.equal(store.comments(owner, artifact.id).length, 1);
+    assert.equal(store.search(owner, { query: 'Durable' })[0].id, artifact.id);
+    assert.deepEqual(store.all('PRAGMA foreign_key_check'), []);
   } finally {
     store.close();
     rmSync(directory, { recursive: true, force: true });
