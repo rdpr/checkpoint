@@ -1,4 +1,6 @@
 import { useMemo } from 'react';
+import { artifactFormat } from '../shared/artifacts';
+import { PlanRawDiffView } from '@plannotator/ui/components/plan-diff/PlanRawDiffView';
 import { PlanDiffViewer } from '@plannotator/ui/components/plan-diff/PlanDiffViewer';
 import { AnnotationToolstrip } from '@plannotator/ui/components/AnnotationToolstrip';
 import { computePlanDiff } from '@plannotator/ui/utils/planDiffEngine';
@@ -11,6 +13,7 @@ import type { Comment, Revision } from '../shared/types';
 
 export type Comparison = { base: Revision; target: Revision };
 export default function RevisionDiff({
+  path,
   comparison,
   comments,
   selected,
@@ -24,6 +27,7 @@ export default function RevisionDiff({
   onSelect,
   onExit,
 }: {
+  path: string;
   comparison: Comparison;
   comments: Comment[];
   selected: string | null;
@@ -71,6 +75,24 @@ export default function RevisionDiff({
         ),
     [comments, comparison],
   );
+  if (artifactFormat(path) !== 'markdown')
+    return (
+      <div className="revision-diff">
+        <div className="annotation-controls">
+          <span>
+            Source changes · revision {comparison.base.number} →{' '}
+            {comparison.target.number}
+          </span>
+          <button className="button" onClick={onExit}>
+            Back to artifact
+          </button>
+        </div>
+        <p className="muted small">
+          Return to the artifact to comment on the rendered revision.
+        </p>
+        <PlanRawDiffView blocks={diff.blocks} />
+      </div>
+    );
   return (
     <div className="revision-diff">
       {canComment && (

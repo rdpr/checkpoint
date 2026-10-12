@@ -367,7 +367,7 @@ test('HTTP review completion preserves identities, revision decisions, rich anch
         injected: 'strip me',
       },
       author: 'Forged',
-      htmlAnchor: { selector: '*' },
+      unsupportedAnchor: { selector: '*' },
     };
     const created = await send(
       `/api/artifacts/${doc.id}/comments`,
@@ -385,7 +385,7 @@ test('HTTP review completion preserves identities, revision decisions, rich anch
     assert.equal(comment.anchor.diagramAnchor.id, 'A');
     assert.equal(comment.anchor.diagramAnchor.injected, undefined);
     assert.equal(comment.anchor.author, undefined);
-    assert.equal(comment.anchor.htmlAnchor, undefined);
+    assert.equal(comment.anchor.unsupportedAnchor, undefined);
     const edits = {
       expectedVersion: comment.version,
       body: 'Corrected feedback',
@@ -2254,6 +2254,223 @@ test('folder changes cross HTTP and MCP atomically, preserve links, and enforce 
         .folders.some((x) => x.id === parent.id),
     );
     reopened.close();
+  } finally {
+    await client.close();
+    await f.close();
+  }
+});
+
+test('all upstream artifact formats round-trip through HTTP and MCP with HTML anchors and revision safety', async () => {
+  const f = await fixture();
+  const client = new Client({ name: 'artifact-review', version: '1.0' });
+  try {
+    const login = await f.request('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'owner@example.test',
+        password: 'owner-password-1234',
+      }),
+    });
+    const headers = { Cookie: login.headers.get('set-cookie')!.split(';')[0] };
+    const key = f.store.createToken(f.owner, f.workspace.id, {
+      name: 'Artifact agent',
+      scope: 'write',
+    });
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), {
+        requestInit: { headers: { Authorization: `Bearer ${key.token}` } },
+      }),
+    );
+    const call = async (name: string, args: Record<string, unknown>) => {
+      const result = await client.callTool({ name, arguments: args });
+      assert.equal(result.isError, undefined, JSON.stringify(result));
+      return (result.structuredContent as { result: any }).result;
+    };
+    const extensions = [
+      'md',
+      'mdx',
+      'txt',
+      'html',
+      'htm',
+      'mmd',
+      'mermaid',
+      'dot',
+      'gv',
+      'yaml',
+      'yml',
+      'json',
+      'jsonc',
+      'json5',
+      'toml',
+      'ini',
+      'cfg',
+      'conf',
+      'properties',
+      'csv',
+      'tsv',
+      'log',
+      'xml',
+      'env.example',
+    ];
+    for (const ext of extensions) {
+      const body =
+        ext === 'html'
+          ? '<!doctype html><h1 id="design">Retry architecture</h1><a href="../target.html?a=1&amp;b=2">Details</a>'
+          : ext === 'mmd'
+            ? '---\nconfig: {}\n---\nflowchart LR\nAPI --> Worker\n'
+            : '---\nartifact source\n---\n';
+      const created = await call('create_artifact', {
+        workspaceId: f.workspace.id,
+        path: `specs/retry.${ext}`,
+        body,
+      });
+      const read = await f.request(`/api/artifacts/${created.id}`, { headers });
+      assert.equal(read.status, 200);
+      assert.equal((await read.json()).revision.body, body);
+      assert.equal(
+        (await call('read_artifact', { artifactId: created.id })).revision.body,
+        body,
+      );
+    }
+    for (const path of ['bad.exe', 'secret.env', '../escape.html']) {
+      const response = await f.request('/api/artifacts', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          workspaceId: f.workspace.id,
+          path,
+          body: 'source',
+        }),
+      });
+      assert.equal(response.status, 400);
+    }
+    const doc = f.store.artifact(
+      f.owner,
+      f.store
+        .artifacts(f.owner, f.workspace.id)
+        .find((a) => a.path === 'specs/retry.html')!.id,
+    );
+    const target = await call('create_artifact', {
+      workspaceId: f.workspace.id,
+      path: 'target.html',
+      body: '<h1>Details</h1>',
+    });
+    const comment = await call('create_comment', {
+      artifactId: doc.id,
+      revisionId: doc.currentRevisionId,
+      body: 'Bound the retry queue.',
+      quote: 'Retry architecture',
+      authorName: 'Forged',
+      anchor: {
+        htmlAnchor: {
+          selector: '#design',
+          tagName: 'h1',
+          text: 'Retry architecture',
+          point: { x: 0.5, y: 0.5 },
+          injected: 'discard',
+        },
+        htmlAdditionalTargets: [
+          {
+            text: 'Details',
+            anchor: { selector: 'a', tagName: 'a', injected: true },
+          },
+        ],
+        elementContext: {
+          tag: 'h1',
+          id: 'design',
+          attrs: { onclick: 'discard' },
+          injected: 'discard',
+        },
+        forged: 'discard',
+      },
+    });
+    assert.equal(comment.authorName, 'Owner');
+    assert.equal(comment.agentName, 'Artifact agent');
+    assert.equal(comment.anchor.htmlAnchor.selector, '#design');
+    assert.equal(comment.anchor.htmlAnchor.injected, undefined);
+    assert.equal(comment.anchor.elementContext.injected, undefined);
+    assert.equal(comment.anchor.forged, undefined);
+    const badAnchor = await client.callTool({
+      name: 'create_comment',
+      arguments: {
+        artifactId: doc.id,
+        revisionId: doc.currentRevisionId,
+        body: 'Invalid',
+        anchor: { htmlAnchor: { selector: '', tagName: 'h1' } },
+      },
+    });
+    assert.equal(badAnchor.isError, true);
+    const feedback = await f.request(
+      `/api/artifacts/${doc.id}/revisions/${doc.currentRevisionId}/feedback`,
+      { headers },
+    );
+    assert.match(await feedback.text(), /HTML element.*design/);
+    const change = await f.request(`/api/artifacts/${doc.id}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
+        expectedRevisionId: doc.currentRevisionId,
+        expectedMetadataVersion: doc.metadataVersion,
+        path: 'renamed/deeper/retry.htm',
+      }),
+    });
+    assert.equal(change.status, 200);
+    const renamed = await change.json();
+    const link = await f.request(
+      `/api/artifacts/${doc.id}/resolve-link?` +
+        new URLSearchParams({
+          revisionId: doc.currentRevisionId,
+          href: '../target.html?a=1&b=2',
+        }),
+      { headers },
+    );
+    assert.equal((await link.json()).artifactId, target.id);
+    const conversion = await f.request(`/api/artifacts/${doc.id}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({
+        expectedRevisionId: doc.currentRevisionId,
+        expectedMetadataVersion: renamed.metadataVersion,
+        path: 'retry.md',
+      }),
+    });
+    assert.equal(conversion.status, 400);
+    const update = {
+      artifactId: doc.id,
+      expectedRevisionId: doc.currentRevisionId,
+      body: '<h1 id="design">Updated architecture</h1>',
+    };
+    const changed = await call('update_artifact', update);
+    assert.equal(
+      (await client.callTool({ name: 'update_artifact', arguments: update }))
+        .isError,
+      true,
+    );
+    const restored = await f.request(`/api/artifacts/${doc.id}/restore`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        revisionId: doc.currentRevisionId,
+        expectedRevisionId: changed.currentRevisionId,
+      }),
+    });
+    assert.equal(restored.status, 200);
+    assert.equal((await restored.json()).revision.body, doc.revision.body);
+    const threads = await call('list_comments', { artifactId: doc.id });
+    assert.equal(threads[0].revisionId, doc.currentRevisionId);
+    assert.equal(
+      threads[0].anchor.htmlAdditionalTargets[0].anchor.selector,
+      'a',
+    );
+    assert.equal((await f.request(`/api/artifacts/${doc.id}`)).status, 401);
+    assert.equal(
+      (
+        await f.request(`/api/artifacts/${doc.id}`, {
+          headers: { ...headers, Origin: 'null' },
+        })
+      ).status,
+      403,
+    );
   } finally {
     await client.close();
     await f.close();

@@ -9,6 +9,12 @@ import {
 } from './Folders';
 import { modKey } from '@plannotator/ui/utils/platform';
 import { Select } from './Select';
+import {
+  ANNOTATABLE_EXTENSIONS_HINT,
+  isAnnotatableDocPath,
+  artifactExtension,
+  artifactFormat,
+} from '../shared/artifacts';
 import { navigate, artifactUrl } from './navigation';
 import { Drafts } from './Drafts';
 import { useEffect, useState, type FormEvent } from 'react';
@@ -37,7 +43,14 @@ import type {
   ReviewRequest,
   Artifact,
 } from '../shared/types';
-import { api, post, errorText, dateLabel, artifactLabel, initials } from './api';
+import {
+  api,
+  post,
+  errorText,
+  dateLabel,
+  artifactLabel,
+  initials,
+} from './api';
 import { Auth } from './Auth';
 import { Account } from './Account';
 import { MyReviews } from './ReviewRequests';
@@ -303,6 +316,8 @@ function WorkspaceApp({
   const [folderIntent, setFolderIntent] = useState<FolderIntent | null>(null);
   const [createFolderId, setCreateFolderId] = useState<string | null>(null);
   const [artifactName, setArtifactName] = useState('');
+  const [artifactBody, setArtifactBody] = useState('');
+  const [newExtension, setNewExtension] = useState('.md');
   const [searchWorkspaceId, setSearchWorkspaceId] = useState('');
   const [error, setError] = useState<string | null>(null),
     [loading, setLoading] = useState(true),
@@ -472,6 +487,8 @@ function WorkspaceApp({
   function startArtifact(parentId: string | null = folderId) {
     setCreateFolderId(parentId);
     setArtifactName('');
+    setArtifactBody('');
+    setNewExtension('.md');
     setModal('artifact');
     setError(null);
   }
@@ -491,7 +508,12 @@ function WorkspaceApp({
       } else {
         const created = await post<Artifact>('/artifacts', {
           workspaceId: wid,
-          path: pathInFolder(catalog.folders, createFolderId, artifactName),
+          path: pathInFolder(
+            catalog.folders,
+            createFolderId,
+            artifactName,
+            newExtension,
+          ),
           body: String(values.body ?? ''),
         });
         await refreshArtifacts();
@@ -887,7 +909,11 @@ function WorkspaceApp({
                     workspace?.name ??
                     'Your work starts here'}
                 </h1>
-                {!workspace && <p>Create a workspace for your team’s specs and design reviews.</p>}
+                {!workspace && (
+                  <p>
+                    Create a workspace for your team’s specs and design reviews.
+                  </p>
+                )}
               </div>
               {workspace ? (
                 workspace.role !== 'viewer' && (
@@ -1035,11 +1061,13 @@ function WorkspaceApp({
                               ?.replace(/\.md$/i, '')
                               .replace(/[-_]/g, ' ')}
                           </strong>
-                          {!folderId && <small>
-                            {folderSegments(catalog.folders, d.folderId)
-                              .map((f) => f.name)
-                              .join(' › ') || 'Workspace root'}
-                          </small>}
+                          {!folderId && (
+                            <small>
+                              {folderSegments(catalog.folders, d.folderId)
+                                .map((f) => f.name)
+                                .join(' › ') || 'Workspace root'}
+                            </small>
+                          )}
                         </span>
                         <time>{dateLabel(d.updatedAt)}</time>
                         <ArrowUpRight size={16} />
@@ -1052,7 +1080,9 @@ function WorkspaceApp({
                       <FileText size={32} strokeWidth={1.2} />
                       <h3>No artifacts yet.</h3>
                       <p>
-                        {workspace.role === 'viewer' ? 'An editor can add artifacts here.' : 'Add a design spec, API proposal, or rollout plan to review with your team.'}
+                        {workspace.role === 'viewer'
+                          ? 'An editor can add artifacts here.'
+                          : 'Add a design spec, API proposal, or rollout plan to review with your team.'}
                       </p>
                     </div>
                   )}
@@ -1073,9 +1103,7 @@ function WorkspaceApp({
       )}
       {(modal === 'workspace' || modal === 'artifact') && (
         <Modal
-          title={
-            modal === 'workspace' ? 'New workspace' : 'New artifact'
-          }
+          title={modal === 'workspace' ? 'New workspace' : 'New artifact'}
           onClose={() => setModal(null)}
         >
           <ErrorMessage message={error} />
@@ -1102,7 +1130,85 @@ function WorkspaceApp({
                     pattern="[^/\\\\]+"
                     placeholder="e.g. Webhook delivery design"
                     value={artifactName}
-                    onChange={(e) => setArtifactName(e.target.value)}
+                    onChange={(e) => {
+                      setArtifactName(e.target.value);
+                      if (isAnnotatableDocPath(e.target.value))
+                        setNewExtension(
+                          artifactExtension(e.target.value).toLowerCase(),
+                        );
+                    }}
+                  />
+                </label>
+                <label>
+                  Format
+                  <Select
+                    aria-label="Artifact format"
+                    value={newExtension}
+                    onChange={(e) => {
+                      setNewExtension(e.target.value);
+                      if (isAnnotatableDocPath(artifactName))
+                        setArtifactName(
+                          artifactName.slice(
+                            0,
+                            -artifactExtension(artifactName).length,
+                          ) + e.target.value,
+                        );
+                    }}
+                  >
+                    {ANNOTATABLE_EXTENSIONS_HINT.split(', ').map((ext) => (
+                      <option key={ext} value={ext}>
+                        {ext === '.md'
+                          ? 'Markdown (.md)'
+                          : ext === '.html'
+                            ? 'HTML (.html)'
+                            : ext === '.mmd'
+                              ? 'Mermaid (.mmd)'
+                              : ext === '.dot'
+                                ? 'Graphviz (.dot)'
+                                : ext}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
+                <label>
+                  Import a file
+                  <input
+                    type="file"
+                    accept={ANNOTATABLE_EXTENSIONS_HINT}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      if (
+                        !isAnnotatableDocPath(file.name) ||
+                        file.size > 4_000_000
+                      ) {
+                        setError(
+                          'Choose a supported text artifact smaller than one million characters.',
+                        );
+                        return;
+                      }
+                      let text: string;
+                      try {
+                        text = new TextDecoder('utf-8', { fatal: true }).decode(
+                          await file.arrayBuffer(),
+                        );
+                      } catch {
+                        setError('The file could not be read as UTF-8 text.');
+                        return;
+                      }
+                      if (text.length > 1_000_000 || text.includes('\0')) {
+                        setError(
+                          'Choose a UTF-8 text artifact smaller than one million characters.',
+                        );
+                        return;
+                      }
+                      setError(null);
+                      setArtifactName(file.name);
+                      setNewExtension(
+                        artifactExtension(file.name).toLowerCase(),
+                      );
+                      setArtifactBody(text);
+                    }}
                   />
                 </label>
                 <FolderPicker
@@ -1114,8 +1220,19 @@ function WorkspaceApp({
                   Starting content
                   <textarea
                     name="body"
+                    value={artifactBody}
+                    onChange={(e) => setArtifactBody(e.target.value)}
                     placeholder={
-                      '# Design spec\n\n## Context\nWhat problem are we solving?\n\n## Proposed design\nDescribe the approach and tradeoffs.\n\n## Open decisions\nWhat needs review before implementation?'
+                      {
+                        markdown:
+                          '# Design spec\n\n## Context\nWhat problem are we solving?\n\n## Proposed design\nDescribe the approach and tradeoffs.\n\n## Open decisions\nWhat needs review before implementation?',
+                        html: '<!doctype html>\n<html>\n<head><title>Retry console</title></head>\n<body>\n<h1>Retry console</h1>\n<p>Review the proposed retry flow and failure states.</p>\n</body>\n</html>',
+                        mermaid:
+                          'flowchart LR\nAPI --> Queue\nQueue --> Worker',
+                        graphviz:
+                          'digraph Delivery {\n  API -> Queue;\n  Queue -> Worker;\n}',
+                        text: 'Paste the source to review…',
+                      }[artifactFormat(`artifact${newExtension}`)]
                     }
                     rows={7}
                     maxLength={1000000}

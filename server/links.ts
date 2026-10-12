@@ -1,8 +1,25 @@
 import { marked } from 'marked';
+import { parse, type DefaultTreeAdapterMap } from 'parse5';
+import { artifactFormat } from '../shared/artifacts.ts';
 // Parse links with the same Markdown parser used by the pinned UI. Code spans,
 // fenced examples and images are not artifact navigation links.
-export function artifactLinks(body: string) {
+export function artifactLinks(body: string, path = 'artifact.md') {
   const links = new Set<string>();
+  if (artifactFormat(path) === 'html') {
+    function visit(node: DefaultTreeAdapterMap['node']) {
+      if (
+        'tagName' in node &&
+        (node.tagName === 'a' || node.tagName === 'area')
+      ) {
+        const href = node.attrs.find((attr) => attr.name === 'href')?.value;
+        if (href && relativePath(href, path) !== null) links.add(href);
+      }
+      if ('childNodes' in node) node.childNodes.forEach(visit);
+    }
+    visit(parse(body));
+    return [...links];
+  }
+  if (artifactFormat(path) !== 'markdown') return [];
   marked.walkTokens(marked.lexer(body), (token) => {
     if (token.type === 'link' && relativePath(token.href, 'root.md') !== null)
       links.add(token.href);

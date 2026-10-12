@@ -25,7 +25,11 @@ Checkpoint is a self-hosted review workspace for engineering teams and coding ag
 - **Coordinate review across projects.** Organize artifacts in folders, search across your workspaces, and follow assigned requests in My reviews. In-app notifications surface replies and review outcomes.
 - **Control access on your infrastructure.** Scope agent credentials to a workspace, manage team membership and service accounts, and use optional Microsoft Entra sign-in. Organization administration and access changes have an audit trail.
 
-Artifacts currently use **Markdown**, including Mermaid diagrams, code blocks, math, and images. Standalone HTML artifacts and interactive HTML previews are not supported.
+Review **Markdown**, **HTML previews**, **Mermaid and Graphviz diagrams**, and **text/config artifacts** using Plannotator’s existing viewers and annotation tools. Create an artifact by choosing its format or importing a UTF-8 file. Markdown includes code, math, and images; HTML supports text selections and element pinpoints, including multiple targets in one discussion. Switch to Interact to try a preview’s controls.
+
+Supported extensions: `.md`, `.mdx`, `.txt`, `.html`, `.htm`, `.mmd`, `.mermaid`, `.dot`, `.gv`, `.yaml`, `.yml`, `.json`, `.jsonc`, `.json5`, `.toml`, `.ini`, `.cfg`, `.conf`, `.properties`, `.csv`, `.tsv`, `.log`, `.xml`, and `.env.example`. MDX uses Markdown rendering; JSX is not executed. Text/config files are shown as source, preserving frontmatter and markup.
+
+HTML runs in an isolated iframe, including its scripts, without access to the app’s session or page. Use self-contained HTML with inline or embedded assets; importing a file does not upload its asset directory. External assets require network access. All formats retain original source, revision-bound reviews, discussion, search, and MCP access. Non-Markdown formats have a source editor and source comparisons; comment on the rendered revision. Renames preserve the rendering format.
 
 ## Install
 
@@ -70,7 +74,7 @@ Keys are limited to one workspace and read or write access. Personal keys follow
 
 Checkpoint uses explicit saves and periodic refresh. Concurrent saves preserve the stale draft for reconciliation. It does not provide simultaneous typing, Git synchronization, or public artifact links. Notifications are in-app; email and chat delivery are not included.
 
-Drafts are stored in the current browser and do not sync across devices or enter server backups. Relative Markdown links stay associated with their original destinations after moves; old paths remain reserved. Access remains workspace-based, including when a link is shared elsewhere.
+Drafts are stored in the current browser and do not sync across devices or enter server backups. Relative Markdown and HTML artifact links stay associated with their original destinations after moves; old paths remain reserved. Access remains workspace-based, including when a link is shared elsewhere.
 
 ## Install the web app
 

@@ -2,6 +2,7 @@ import { createPortal } from 'react-dom';
 import { useConfirm } from './Confirm';
 import { Select } from './Select';
 import { PopoverDraftScope } from './popoverDrafts';
+import { artifactExtension } from '../shared/artifacts';
 import { readDraft, writeDraft } from './drafts';
 import { ArtifactActions } from './Discovery';
 import {
@@ -554,6 +555,9 @@ export function ArtifactView({
               : undefined,
           mathTargets: annotation.mathTargets,
           diagramAnchor: annotation.diagramAnchor,
+          htmlAnchor: annotation.htmlAnchor,
+          htmlAdditionalTargets: annotation.htmlAdditionalTargets,
+          elementContext: annotation.elementContext,
         },
       },
     };
@@ -568,7 +572,12 @@ export function ArtifactView({
         {draft && (
           <button
             className="button"
-            onClick={() => download('recovered-draft.md', draft.body)}
+            onClick={() =>
+              download(
+                `recovered-draft${artifactExtension(doc?.path ?? 'artifact.md')}`,
+                draft.body,
+              )
+            }
           >
             Download your unsaved draft
           </button>
@@ -895,8 +904,8 @@ export function ArtifactView({
               )}
               <button
                 className="icon-button"
-                title="Download Markdown"
-                aria-label="Download Markdown"
+                title="Download artifact"
+                aria-label="Download artifact"
                 onClick={() =>
                   download(
                     doc.path.split('/').pop()!,
@@ -904,7 +913,7 @@ export function ArtifactView({
                   )
                 }
               >
-                <Download size={16} /> Download Markdown
+                <Download size={16} /> Download artifact
               </button>
             </ActionPopover>{' '}
           </div>,
@@ -1167,7 +1176,12 @@ export function ArtifactView({
               </button>
               <button
                 className="text-button"
-                onClick={() => download('unsaved-draft.md', draft.body)}
+                onClick={() =>
+                  download(
+                    `unsaved-draft${artifactExtension(doc.path)}`,
+                    draft.body,
+                  )
+                }
               >
                 Download draft
               </button>
@@ -1210,6 +1224,7 @@ export function ArtifactView({
               >
                 {comparing ? (
                   <RevisionDiff
+                    path={doc.path}
                     key={`${comparing.base.id}:${comparing.target.id}`}
                     comparison={comparing}
                     comments={throughRevision}
@@ -1232,6 +1247,7 @@ export function ArtifactView({
                   />
                 ) : (
                   <Surface
+                    path={doc.path}
                     key={`${id}:${historical?.id ?? requestRevision?.id ?? (mode === 'edit' ? draft?.baseRevisionId : doc.currentRevisionId)}:${mode}`}
                     body={
                       mode === 'compare' && historical
@@ -1795,7 +1811,7 @@ function CommentCard({
           <blockquote>{attachment.quote}</blockquote>
         </div>
       )}
-      {comment.quote &&
+      {(comment.quote || !!comment.anchor?.htmlAnchor) &&
         (!comment.diff || attachment) &&
         location &&
         (location !== 'found' || older) && (

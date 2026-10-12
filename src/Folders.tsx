@@ -12,6 +12,7 @@ import type { ArtifactSummary, Catalog, Folder } from '../shared/types';
 import { api, errorText, artifactLabel } from './api';
 import { ActionPopover, ErrorMessage, Modal } from './ui';
 import { Select } from './Select';
+import { isAnnotatableDocPath } from '../shared/artifacts';
 
 export function folderSegments(folders: Folder[], id: string | null): Folder[] {
   const folder = folders.find((f) => f.id === id);
@@ -21,12 +22,13 @@ export function pathInFolder(
   folders: Folder[],
   id: string | null,
   name: string,
+  extension = '.md',
 ) {
   name = name.trim();
   if (!name) return '';
   return [
     ...folderSegments(folders, id).map((f) => f.name),
-    /\.md$/i.test(name) ? name : `${name}.md`,
+    isAnnotatableDocPath(name) ? name : `${name}${extension}`,
   ].join('/');
 }
 export function FolderPicker({

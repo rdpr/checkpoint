@@ -1,7 +1,14 @@
 import { useTheme } from '@plannotator/ui/components/ThemeProvider';
 import { api } from './api';
 import { artifactUrl } from './navigation';
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  HtmlViewer,
+  projectHostThreads,
+  buildPersistedHtmlAnchor,
+} from '@plannotator/ui/components/html-viewer';
+import { HtmlSurfaceControls } from '@plannotator/ui/components/HtmlSurfaceControls';
+import { artifactFormat, sourceFence } from '../shared/artifacts';
 import { createPortal } from 'react-dom';
 import { TableOfContents } from '@plannotator/ui/components/TableOfContents';
 import { useActiveSection } from '@plannotator/ui/hooks/useActiveSection';
@@ -12,7 +19,10 @@ import {
   type MarkdownEditorHandle,
 } from '@plannotator/ui/components/MarkdownEditor';
 import { MarkdownDiff } from '@plannotator/ui/components/MarkdownDiff';
-import { parseMarkdownToBlocks } from '@plannotator/ui/utils/parser';
+import {
+  parseMarkdownToBlocks,
+  diagramDocumentBlocks,
+} from '@plannotator/ui/utils/parser';
 import {
   AnnotationType,
   type Annotation,
@@ -25,6 +35,7 @@ import type { Comment } from '../shared/types';
 
 export default function PlannotatorSurface({
   body,
+  path,
   artifactId,
   mode,
   comments,
@@ -47,6 +58,7 @@ export default function PlannotatorSurface({
   onTocNavigate,
 }: {
   body: string;
+  path: string;
   artifactId: string;
   mode: 'read' | 'edit' | 'compare';
   comments: Comment[];
@@ -69,13 +81,25 @@ export default function PlannotatorSurface({
   onTocNavigate: () => void;
 }) {
   const { resolvedMode } = useTheme();
+  const [annotatingHtml, setAnnotatingHtml] = useState(true);
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const viewerRef = useRef<ViewerHandle | null>(null);
   const restoredIds = useRef(new Map<string, string>());
-  const blocks = useMemo(() => parseMarkdownToBlocks(body), [body]);
+  const format = artifactFormat(path);
+  const blocks = useMemo(
+    () =>
+      format === 'html'
+        ? []
+        : format === 'mermaid' || format === 'graphviz'
+          ? diagramDocumentBlocks(body, format)
+          : format === 'text'
+            ? parseMarkdownToBlocks(sourceFence(body), { frontmatter: false })
+            : parseMarkdownToBlocks(body),
+    [body, format],
+  );
   const contentRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    if (mode !== 'read') return;
+    if (mode !== 'read' || format === 'html') return;
     let active = true;
     const [id, revisionId] = artifactId.split(':');
     const anchors = Array.from(
@@ -126,7 +150,7 @@ export default function PlannotatorSurface({
     return () => {
       active = false;
     };
-  }, [body, artifactId, mode]);
+  }, [body, artifactId, mode, format]);
   const headingCount = blocks.filter(
     (block) => block.type === 'heading' && (block.level ?? 1) <= 3,
   ).length;
@@ -137,41 +161,83 @@ export default function PlannotatorSurface({
   );
   const annotations = useMemo(
     () =>
-      comments
-        .filter((c) => !c.resolved && !c.diff)
-        .map(
-          (c) =>
-            ({
-              ...(c.anchor ?? {}),
-              id: c.id,
-              blockId:
-                typeof c.anchor?.blockId === 'string' ? c.anchor.blockId : '',
-              startOffset:
-                typeof c.anchor?.startOffset === 'number'
-                  ? c.anchor.startOffset
-                  : 0,
-              endOffset:
-                typeof c.anchor?.endOffset === 'number'
-                  ? c.anchor.endOffset
-                  : 0,
-              originalText: c.quote,
-              text: c.body,
-              type:
-                c.kind === 'deletion'
-                  ? AnnotationType.DELETION
-                  : c.quote
-                    ? AnnotationType.COMMENT
-                    : AnnotationType.GLOBAL_COMMENT,
+      format === 'html'
+        ? projectHostThreads(
+            comments
+              .filter((c) => !c.diff)
+              .map((c) => ({
+                ...buildPersistedHtmlAnchor({
+                  ...c.anchor,
+                  originalText: c.quote,
+                }).anchor,
+                id: c.id,
+                text: c.body,
+                author: c.authorName,
+                createdA: Date.parse(c.createdAt),
+                state: c.resolved ? 'resolved' : 'open',
+                images: c.images,
+              })),
+            { openOnly: true },
+          ).map((a) => {
+            const c = comments.find((c) => c.id === a.id)!;
+            return {
+              ...a,
+              ...(c.kind === 'deletion'
+                ? { type: AnnotationType.DELETION }
+                : {}),
               isQuickLabel: c.kind === 'label',
               quickLabelTip: c.labelTip ?? undefined,
-              images: c.images,
-              author: c.authorName,
-              createdA: Date.parse(c.createdAt),
-            }) as Annotation,
-        ),
-    [comments],
+            };
+          })
+        : comments
+            .filter((c) => !c.resolved && !c.diff)
+            .map(
+              (c) =>
+                ({
+                  ...(c.anchor ?? {}),
+                  id: c.id,
+                  blockId:
+                    typeof c.anchor?.blockId === 'string'
+                      ? c.anchor.blockId
+                      : '',
+                  startOffset:
+                    typeof c.anchor?.startOffset === 'number'
+                      ? c.anchor.startOffset
+                      : 0,
+                  endOffset:
+                    typeof c.anchor?.endOffset === 'number'
+                      ? c.anchor.endOffset
+                      : 0,
+                  originalText: c.quote,
+                  text: c.body,
+                  type:
+                    c.kind === 'deletion'
+                      ? AnnotationType.DELETION
+                      : c.quote
+                        ? AnnotationType.COMMENT
+                        : AnnotationType.GLOBAL_COMMENT,
+                  isQuickLabel: c.kind === 'label',
+                  quickLabelTip: c.labelTip ?? undefined,
+                  images: c.images,
+                  author: c.authorName,
+                  createdA: Date.parse(c.createdAt),
+                }) as Annotation,
+            ),
+    [comments, format],
+  );
+  const reportHtmlAnchors = useCallback(
+    (unanchored: string[]) => {
+      onRestoreReport({
+        attempted: annotations
+          .filter((a) => a.type !== AnnotationType.GLOBAL_COMMENT)
+          .map((a) => a.id),
+        unanchored,
+      });
+    },
+    [annotations, onRestoreReport],
   );
   useEffect(() => {
+    if (format === 'html') return;
     const viewer = viewerRef.current;
     if (!viewer) return;
     const currentIds = new Map(
@@ -187,7 +253,20 @@ export default function PlannotatorSurface({
     // viewer's explicit restore API. Leave pending selections alone on polls.
     viewer.applySharedAnnotations(annotations);
     restoredIds.current = currentIds;
-  }, [annotations, body, mode, readOnly]);
+  }, [annotations, body, mode, readOnly, format]);
+  if (mode === 'edit' && format !== 'markdown')
+    return (
+      <label className="source-editor">
+        Artifact source
+        <textarea
+          aria-label="Artifact source"
+          value={body}
+          onChange={(e) => onChange(e.target.value)}
+          spellCheck={false}
+          maxLength={1000000}
+        />
+      </label>
+    );
   if (mode === 'edit')
     return (
       <MarkdownEditor
@@ -203,11 +282,102 @@ export default function PlannotatorSurface({
   if (mode === 'compare')
     return (
       <MarkdownDiff
-        originalMarkdown={compareBody ?? ''}
-        modifiedMarkdown={body}
+        originalMarkdown={
+          format === 'markdown'
+            ? (compareBody ?? '')
+            : sourceFence(compareBody ?? '')
+        }
+        modifiedMarkdown={format === 'markdown' ? body : sourceFence(body)}
         documentId={artifactId}
         mode={resolvedMode}
       />
+    );
+  if (format === 'html')
+    return (
+      <div className="html-surface">
+        {tocTarget &&
+          createPortal(
+            <p className="muted small">
+              Use links within the HTML preview to navigate sections.
+            </p>,
+            tocTarget,
+          )}
+        {!readOnly && (
+          <div
+            className="annotation-controls"
+            role="region"
+            aria-label="Review tools"
+          >
+            <HtmlSurfaceControls
+              armed={annotatingHtml}
+              onToggleArmed={() => setAnnotatingHtml((active) => !active)}
+              labels={{
+                annotateLabel: 'Interact with preview',
+                interactLabel: 'Annotate preview',
+              }}
+              shortcuts={{ annotate: null }}
+            />
+            <button
+              className="button"
+              aria-pressed={annotatingHtml && inputMethod === 'drag'}
+              onClick={() => {
+                setAnnotatingHtml(true);
+                onInputMethodChange('drag');
+              }}
+            >
+              Select text
+            </button>
+            <button
+              className="button"
+              aria-pressed={annotatingHtml && inputMethod === 'pinpoint'}
+              onClick={() => {
+                setAnnotatingHtml(true);
+                onInputMethodChange('pinpoint');
+              }}
+            >
+              Pinpoint
+            </button>
+            <span className="muted small">
+              {annotatingHtml
+                ? 'Select text or pinpoint an element to comment.'
+                : 'Interact with the preview.'}
+            </span>
+          </div>
+        )}
+        <HtmlViewer
+          ref={viewerRef}
+          rawHtml={body}
+          annotations={annotations}
+          title="HTML artifact preview"
+          maxWidth={layout === 'wide' ? null : 832}
+          mode="comment"
+          inputMethod={inputMethod}
+          annotateModeActive={annotatingHtml}
+          onAnnotateModeExit={() => setAnnotatingHtml(false)}
+          onAnnotateModeToggle={() => setAnnotatingHtml((active) => !active)}
+          readOnly={readOnly}
+          selectedAnnotationId={selected}
+          onSelectAnnotation={onSelect}
+          onAddAnnotation={(annotation) => {
+            viewerRef.current?.removeHighlight(annotation.id);
+            onComment(annotation);
+          }}
+          onUnanchoredChange={reportHtmlAnchors}
+          selectionActions={selectionActions}
+          initialFragment={
+            new URLSearchParams(location.search).get('heading') ?? undefined
+          }
+          onOpenLink={(href) => {
+            if (/^https?:\/\//i.test(href))
+              window.open(href, '_blank', 'noopener,noreferrer');
+            else if (
+              !/^[a-z][a-z\d+.-]*:/i.test(href) &&
+              !href.startsWith('//')
+            )
+              onLink(href);
+          }}
+        />
+      </div>
     );
   return (
     <div

@@ -366,7 +366,7 @@ test('invalid paths and cross-artifact revision references never create partial 
       '/plan.md',
       'a//b.md',
       'a/../b.md',
-      'plan.html',
+      'plan.exe',
     ])
       assert.throws(() =>
         store.createArtifact(owner, {

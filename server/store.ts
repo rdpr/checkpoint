@@ -4,6 +4,8 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { artifactFormat } from '../shared/artifacts.ts';
+import { buildPersistedHtmlAnchor } from '@plannotator/core/html-anchor';
 import { z } from 'zod';
 import type {
   Folder,
@@ -57,7 +59,8 @@ type Account = User & { password: string; disabled_at: string | null };
 const now = () => new Date().toISOString();
 const expiry = (hours: number) =>
   new Date(Date.now() + hours * 3600000).toISOString();
-const welcome = "# Review your first design\n\nUse this workspace to review specs and engineering decisions with your team and coding agents.\n\n## Start with a concrete proposal\n\nCreate an artifact such as `specs/webhook-delivery.md`. Include the problem, proposed architecture, alternatives, and questions for reviewers. Markdown supports code blocks, Mermaid diagrams, math, and images.\n\n## Get feedback before the next step\n\n- Invite an engineer from **Members**, then use **Request review** on a saved revision.\n- Select a passage or pinpoint a diagram element to comment. Use **New discussion** for a broader design question.\n- Use **Finish review** to approve or request changes. The decision belongs to that exact revision.\n\n## Work with an agent\n\nOpen **Agent access** to create a scoped MCP key. Ask the agent to publish a spec, request your review, and read the feedback before revising or moving to implementation. Only people can make review decisions; Checkpoint records them without enforcing an execution gate.\n\n## Check what changed\n\nCompare revisions in **Activity** to see how feedback was addressed. Saved revisions and discussion remain available. Save edits explicitly; if someone saves first, your draft is preserved for reconciliation.\n";
+const welcome =
+  '# Review your first design\n\nUse this workspace to review specs and engineering decisions with your team and coding agents.\n\n## Start with a concrete proposal\n\nCreate an artifact such as `specs/webhook-delivery.md`. Include the problem, proposed architecture, alternatives, and questions for reviewers. Choose Markdown for a written spec, HTML for an interactive design preview, or a standalone Mermaid or Graphviz diagram. Text and config files can be reviewed too.\n\n## Get feedback before the next step\n\n- Invite an engineer from **Members**, then use **Request review** on a saved revision.\n- Select a passage or pinpoint a diagram element to comment. Use **New discussion** for a broader design question.\n- Use **Finish review** to approve or request changes. The decision belongs to that exact revision.\n\n## Work with an agent\n\nOpen **Agent access** to create a scoped MCP key. Ask the agent to publish a spec, request your review, and read the feedback before revising or moving to implementation. Only people can make review decisions; Checkpoint records them without enforcing an execution gate.\n\n## Check what changed\n\nCompare revisions in **Activity** to see how feedback was addressed. Saved revisions and discussion remain available. Save edits explicitly; if someone saves first, your draft is preserved for reconciliation.\n';
 
 export const DATABASE_VERSION = 12;
 
@@ -143,7 +146,7 @@ export class Store {
       `);
     });
   }
-  // Paths remain an interchange format for Markdown and agents. Folders have
+  // Paths remain an interchange format for artifacts and agents. Folders have
   // independent IDs so empty folders and navigation survive a rename or move.
   private ensureFolderPath(
     workspaceId: string,
@@ -703,7 +706,7 @@ export class Store {
       artifactId,
     )!;
     const base = restoredFrom ?? source.currentRevisionId;
-    for (const href of artifactLinks(body)) {
+    for (const href of artifactLinks(body, source.path)) {
       const previous = this.one<{ path: string }>(
         'SELECT target_path path FROM revision_links WHERE revision_id=? AND href=?',
         base,
@@ -1187,7 +1190,15 @@ export class Store {
   }
   addComment(actor: Actor, input: unknown) {
     const data = schema.addComment.parse(input);
-    this.artifactRow(actor, data.artifactId, true);
+    const artifact = this.artifactRow(actor, data.artifactId, true);
+    if (artifactFormat(artifact.path) === 'html' && !data.diff) {
+      const { anchor } = buildPersistedHtmlAnchor({
+        ...data.anchor,
+        originalText: data.quote,
+      });
+      data.quote = anchor.originalText;
+      data.anchor = anchor;
+    }
     if (!data.submissionId) return this.insertComment(actor, data);
     // A lost response must not create a second discussion. Keep receipts after
     // deletion too, so retrying cannot resurrect a deliberately deleted comment.
@@ -1434,6 +1445,14 @@ export class Store {
         data.expectedVersion,
       );
       const doc = this.artifactRow(actor, row.artifactId, true);
+      if (artifactFormat(doc.path) === 'html') {
+        const { anchor } = buildPersistedHtmlAnchor({
+          ...data.anchor,
+          originalText: data.quote,
+        });
+        data.quote = anchor.originalText;
+        data.anchor = anchor;
+      }
       requireThat(
         doc.currentRevisionId === data.expectedRevisionId,
         409,
@@ -2529,6 +2548,12 @@ export class Store {
         'This artifact was renamed or archived elsewhere. Refresh before trying again.',
       );
       const path = data.path ?? doc.path;
+      requireThat(
+        artifactFormat(path) === artifactFormat(doc.path),
+        400,
+        'artifact_format_change',
+        'Keep the artifact format when renaming. Create a new artifact to change formats.',
+      );
       requireThat(
         !this.one(
           'SELECT artifact_id id FROM artifact_paths WHERE workspace_id=? AND path=? AND artifact_id<>?',

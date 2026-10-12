@@ -1,6 +1,11 @@
 import type { Comment, Revision, ReviewDecision } from '../shared/types.ts';
 import { currentDecisions, reviewStatus } from '../shared/review.ts';
 import {
+  parseHtmlElementAnchor,
+  parseHtmlElementContext,
+  parseHtmlAdditionalTargets,
+} from '@plannotator/core/html-anchor';
+import {
   diagramAnchorLocationLine,
   parseDiagramAnchor,
 } from '@plannotator/core/diagram-anchor';
@@ -37,7 +42,7 @@ export function formatFeedback(
     '',
     '## Discussions',
     '',
-    'Earlier-revision quotes and diagram locations refer to their original revision. Resolved threads are included for context.',
+    'Earlier-revision quotes and element locations refer to their original revision. Resolved threads are included for context.',
     '',
   );
   for (const c of comments.filter(
@@ -69,6 +74,14 @@ export function formatFeedback(
     if (c.quote) lines.push(...c.quote.split('\n').map((l) => `> ${l}`), '');
     const diagram = parseDiagramAnchor(c.anchor?.diagramAnchor);
     if (diagram) lines.push(diagramAnchorLocationLine(diagram), '');
+    const html = parseHtmlElementAnchor(c.anchor?.htmlAnchor);
+    if (html) lines.push(`HTML element: ${JSON.stringify(html)}`, '');
+    const context = parseHtmlElementContext(c.anchor?.elementContext);
+    if (context) lines.push(`Element context: ${JSON.stringify(context)}`, '');
+    for (const target of parseHtmlAdditionalTargets(
+      c.anchor?.htmlAdditionalTargets,
+    ))
+      lines.push(`Additional HTML target: ${JSON.stringify(target)}`, '');
     if (c.body) lines.push(c.body, '');
     if (c.labelTip) lines.push(`Label instruction: ${c.labelTip}`, '');
     for (const image of c.images)

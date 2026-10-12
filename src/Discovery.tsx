@@ -1,4 +1,5 @@
 import { artifactLocation } from './api';
+import { artifactExtension } from '../shared/artifacts';
 import { FolderPicker, pathInFolder } from './Folders';
 import { Select } from './Select';
 import { useEffect, useState } from 'react';
@@ -97,8 +98,8 @@ export function SearchArtifacts({
         </label>
       </div>
       <p className="small muted">
-        Searches the latest saved Markdown. All words must match; partial words
-        are supported. Up to 100 results.
+        Searches the latest saved source and artifact names. All words must
+        match; partial words are supported. Up to 100 results.
       </p>
       <ErrorMessage message={error} />
       {loading ? (
@@ -277,7 +278,7 @@ export function ArtifactActions({
   // Keep the displayed snapshot while this dialog is open so concurrent changes conflict.
   const [snapshot, setSnapshot] = useState(doc);
   const path = catalog
-    ? pathInFolder(catalog.folders, folderId, name)
+    ? pathInFolder(catalog.folders, folderId, name, artifactExtension(doc.path))
     : doc.path;
   async function save(archive?: boolean) {
     setBusy(true);

@@ -72,7 +72,13 @@ export const initials = (name: string) =>
     .toUpperCase();
 export function download(name: string, body: string) {
   const url = URL.createObjectURL(
-    new Blob([body], { type: 'text/markdown;charset=utf-8' }),
+    new Blob([body], {
+      type: /\.html?$/i.test(name)
+        ? 'text/html;charset=utf-8'
+        : /\.mdx?$/i.test(name)
+          ? 'text/markdown;charset=utf-8'
+          : 'text/plain;charset=utf-8',
+    }),
   );
   const a = document.createElement('a');
   a.href = url;

@@ -2041,3 +2041,41 @@
     margin: 7px 4px;
   }
 }
+:root:not(.light) .artifact-surface ::selection {
+  background: #b9c8ff;
+  color: #141b30;
+}
+
+/* web-highlighter paints pending selections as marks before assigning a kind. */
+:root:not(.light)
+  .artifact-surface
+  .annotation-highlight:not(.comment):not(.deletion),
+:root:not(.light) .artifact-surface .annotation-highlight.focused {
+  background: #b9c8ff !important;
+  color: #141b30 !important;
+}
+:root:not(.light)
+  .artifact-surface
+  .annotation-highlight:not(.comment):not(.deletion)
+  *,
+:root:not(.light) .artifact-surface .annotation-highlight.focused * {
+  color: inherit !important;
+}
+.source-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+}
+.source-editor textarea {
+  min-height: 65vh;
+  width: 100%;
+  font-family: var(--font-mono);
+  white-space: pre;
+  tab-size: 2;
+}
+.html-surface iframe {
+  width: 100%;
+  min-height: 60vh;
+  background: white;
+}

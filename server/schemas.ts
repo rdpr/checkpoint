@@ -1,4 +1,13 @@
 import { z } from 'zod';
+import {
+  isAnnotatableDocPath,
+  ANNOTATABLE_EXTENSIONS_HINT,
+} from '../shared/artifacts.ts';
+import {
+  parseHtmlElementAnchor,
+  parseHtmlElementContext,
+  parseHtmlAdditionalTargets,
+} from '@plannotator/core/html-anchor';
 import { parseDiagramAnchor } from '@plannotator/core/diagram-anchor';
 
 export const id = z.string().uuid();
@@ -16,8 +25,11 @@ export const path = z
       !value.includes('\\') &&
       !/[\x00-\x1f\x7f]/.test(value) &&
       value.split('/').every((part) => part && part !== '.' && part !== '..') &&
-      /\.md$/i.test(value),
-    'Use a relative Markdown path, such as specs/webhook-delivery.md.',
+      isAnnotatableDocPath(value),
+    `Use a relative artifact path with a supported extension: ${ANNOTATABLE_EXTENSIONS_HINT}.`,
+  )
+  .describe(
+    `Relative artifact path. Supported extensions: ${ANNOTATABLE_EXTENSIONS_HINT}.`,
   );
 export const account = z.object({
   name: z.string().trim().min(1).max(80),
@@ -48,6 +60,34 @@ const textMeta = z.object({
   textOffset: z.number().int().nonnegative().max(1000000),
 });
 export const anchor = z.object({
+  htmlAnchor: z
+    .unknown()
+    .transform((value, ctx) => {
+      const parsed = parseHtmlElementAnchor(value);
+      if (parsed) return parsed;
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Invalid HTML element anchor.',
+      });
+      return z.NEVER;
+    })
+    .optional(),
+  htmlAdditionalTargets: z
+    .array(
+      z.object({
+        text: z.string().min(1).max(400),
+        label: z.string().max(64).optional(),
+        anchor: z.unknown().optional(),
+        context: z.unknown().optional(),
+      }),
+    )
+    .max(16)
+    .transform((value) => parseHtmlAdditionalTargets(value))
+    .optional(),
+  elementContext: z
+    .unknown()
+    .transform((value) => parseHtmlElementContext(value))
+    .optional(),
   blockId: z.string().max(200).optional(),
   startOffset: z.number().int().nonnegative().max(1000000).optional(),
   endOffset: z.number().int().nonnegative().max(1000000).optional(),
