@@ -1155,7 +1155,9 @@ function WorkspaceApp({
                         );
                     }}
                   >
-                    {ANNOTATABLE_EXTENSIONS_HINT.split(', ').map((ext) => (
+                    {Array.from(
+                      new Set(['.md', '.html', '.mmd', '.dot', newExtension]),
+                    ).map((ext) => (
                       <option key={ext} value={ext}>
                         {ext === '.md'
                           ? 'Markdown (.md)'
@@ -1165,7 +1167,7 @@ function WorkspaceApp({
                               ? 'Mermaid (.mmd)'
                               : ext === '.dot'
                                 ? 'Graphviz (.dot)'
-                                : ext}
+                                : `${ext} (${['.mdx', '.htm', '.mermaid', '.gv'].includes(ext) ? 'imported format' : 'source text'})`}
                       </option>
                     ))}
                   </Select>

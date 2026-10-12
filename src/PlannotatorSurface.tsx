@@ -7,7 +7,7 @@ import {
   projectHostThreads,
   buildPersistedHtmlAnchor,
 } from '@plannotator/ui/components/html-viewer';
-import { HtmlSurfaceControls } from '@plannotator/ui/components/HtmlSurfaceControls';
+import { HtmlReviewToolbar } from './HtmlReviewToolbar';
 import { artifactFormat, sourceFence } from '../shared/artifacts';
 import { createPortal } from 'react-dom';
 import { TableOfContents } from '@plannotator/ui/components/TableOfContents';
@@ -303,46 +303,14 @@ export default function PlannotatorSurface({
             tocTarget,
           )}
         {!readOnly && (
-          <div
-            className="annotation-controls"
-            role="region"
-            aria-label="Review tools"
-          >
-            <HtmlSurfaceControls
-              armed={annotatingHtml}
-              onToggleArmed={() => setAnnotatingHtml((active) => !active)}
-              labels={{
-                annotateLabel: 'Interact with preview',
-                interactLabel: 'Annotate preview',
-              }}
-              shortcuts={{ annotate: null }}
-            />
-            <button
-              className="button"
-              aria-pressed={annotatingHtml && inputMethod === 'drag'}
-              onClick={() => {
-                setAnnotatingHtml(true);
-                onInputMethodChange('drag');
-              }}
-            >
-              Select text
-            </button>
-            <button
-              className="button"
-              aria-pressed={annotatingHtml && inputMethod === 'pinpoint'}
-              onClick={() => {
-                setAnnotatingHtml(true);
-                onInputMethodChange('pinpoint');
-              }}
-            >
-              Pinpoint
-            </button>
-            <span className="muted small">
-              {annotatingHtml
-                ? 'Select text or pinpoint an element to comment.'
-                : 'Interact with the preview.'}
-            </span>
-          </div>
+          <HtmlReviewToolbar
+            armed={annotatingHtml}
+            onArmedChange={setAnnotatingHtml}
+            inputMethod={inputMethod}
+            onInputMethodChange={onInputMethodChange}
+            mode={reviewMode === 'comment' ? 'comment' : 'selection'}
+            onModeChange={onReviewModeChange}
+          />
         )}
         <HtmlViewer
           ref={viewerRef}
@@ -350,7 +318,7 @@ export default function PlannotatorSurface({
           annotations={annotations}
           title="HTML artifact preview"
           maxWidth={layout === 'wide' ? null : 832}
-          mode="comment"
+          mode={reviewMode === 'comment' ? 'comment' : 'selection'}
           inputMethod={inputMethod}
           annotateModeActive={annotatingHtml}
           onAnnotateModeExit={() => setAnnotatingHtml(false)}

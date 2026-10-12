@@ -39,6 +39,14 @@ test('HTML import, isolated preview, persistent pinpoint feedback and source rev
   const body = `<!doctype html><html><head><style>body{font:18px sans-serif;padding:30px;background:white;color:#172033} section{padding:24px;border:1px solid #aaa}</style></head><body><h1>Retry architecture</h1><section id="queue">Queue capacity is an open decision.</section><button id="simulate" onclick="this.textContent='Retry queued'">Simulate retry</button><p id="isolation">Checking isolation</p><script>try {parent.document.body.dataset.artifactEscape='bad';document.querySelector('#isolation').textContent='Unsafe';} catch {document.querySelector('#isolation').textContent='Preview script runs in isolation';}</script></body></html>`;
   await page.goto(`/?workspace=${workspace.id}`);
   await page.getByRole('button', { name: 'New artifact', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Artifact format' }).click();
+  await expect(page.getByRole('option')).toHaveText([
+    'Markdown (.md)',
+    'HTML (.html)',
+    'Mermaid (.mmd)',
+    'Graphviz (.dot)',
+  ]);
+  await page.keyboard.press('Escape');
   await page.getByLabel('Import a file').setInputFiles({
     name: 'retry-console.html',
     mimeType: 'text/html',
@@ -279,4 +287,65 @@ test('dark viewer selection has readable foreground and background colors', asyn
     color: 'rgb(20, 27, 48)',
     background: 'rgb(185, 200, 255)',
   });
+});
+
+test('HTML markup offers native selection actions and persists Looks good feedback', async ({
+  page,
+}) => {
+  const workspace = await setup(page, 'HTML selection tools');
+  const artifact = await post(page.request, '/artifacts', {
+    workspaceId: workspace.id,
+    path: 'decision.html',
+    body: '<!doctype html><html><body><p id="decision" style="font:20px sans-serif;padding:24px">Keep a stable delivery ID across retries.</p></body></html>',
+  });
+  await page.goto(`/?workspace=${workspace.id}&artifact=${artifact.id}`);
+  await appearance(page, 'Dark');
+  const tools = page.getByRole('region', { name: 'Review tools' });
+  await tools.getByRole('button', { name: 'Select', exact: true }).click();
+  await tools.getByRole('button', { name: 'Markup', exact: true }).click();
+  const frame = page.frameLocator('iframe[title="HTML artifact preview"]');
+  await frame.locator('#decision').click({ clickCount: 3 });
+  const actions = page.locator('[data-pn-annotation-toolbar-row]');
+  await expect(
+    actions.getByRole('button', { name: 'Copy', exact: true }),
+  ).toBeVisible();
+  await expect(
+    actions.getByRole('button', { name: 'Comment', exact: true }),
+  ).toBeVisible();
+  await expect(
+    actions.getByRole('button', { name: 'Delete', exact: true }),
+  ).toHaveCount(0);
+  await actions.getByTitle('Looks good', { exact: true }).click();
+  await expect(
+    page.getByText('Looks good', { exact: true }).first(),
+  ).toBeVisible();
+  await page.reload();
+  const comments = await (
+    await page.request.get(`/api/artifacts/${artifact.id}/comments`)
+  ).json();
+  expect(comments).toHaveLength(1);
+  expect(comments[0]).toMatchObject({
+    kind: 'label',
+    quote: 'Keep a stable delivery ID across retries.',
+  });
+  await expect(frame.locator('[data-plannotator-marker]')).toHaveCount(1);
+  await tools
+    .getByRole('button', { name: 'Comment', exact: true })
+    .click();
+  await frame.locator('#decision').click({ clickCount: 3 });
+  await page
+    .getByPlaceholder('Add a comment...', { exact: true })
+    .fill('Document receiver deduplication.');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(
+    page.getByText('Document receiver deduplication.', { exact: true }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'Return to artifact', exact: true }).click();
+  await expect(
+    tools.getByRole('button', { name: 'Markup', exact: true }),
+  ).toBeInViewport();
+  await expect(
+    tools.getByRole('button', { name: 'Interact with preview' }),
+  ).toBeInViewport();
 });

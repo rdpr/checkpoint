@@ -2079,3 +2079,53 @@
   min-height: 60vh;
   background: white;
 }
+
+.html-review-tools {
+  position: sticky;
+  top: 12px;
+  z-index: 40;
+  max-width: 832px;
+  margin: 0 auto 16px;
+  padding: 8px;
+  border: 1px solid var(--cp-border);
+  border-radius: 10px;
+  background: var(--cp-surface);
+}
+.layout-wide .html-review-tools {
+  max-width: none;
+}
+.html-review-tool-groups {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.html-review-tool-group {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--cp-soft);
+}
+.html-review-tool-group button {
+  color: var(--cp-muted);
+}
+.html-review-tool-group button[aria-pressed='true'] {
+  background: var(--cp-surface);
+  color: var(--cp-text);
+  box-shadow: 0 1px 3px #0002;
+}
+.html-review-interact {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--cp-muted);
+  font-size: 12px;
+}
+.html-review-hint {
+  margin: 8px 4px 0;
+  color: var(--cp-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
