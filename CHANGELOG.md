@@ -1,9 +1,23 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-10-13
 
-- Add configurable OpenID Connect sign-in with issuer discovery, scopes, optional prompt and provider logout, and explicit `client_secret_post` authentication.
-- Key identities by issuer and subject; preserve and migrate existing Entra links on verified sign-in. Legacy Entra configuration remains supported; deployment templates now use `OIDC_*` settings.
+### OpenID Connect identity
+
+- Sign in with a configurable OIDC provider using issuer discovery, custom scopes and explicit `client_secret_post` token-endpoint authentication. Client IDs and subjects do not need to be UUIDs.
+- Configure `OIDC_PROMPT` or leave it empty to omit the authorization prompt. Optionally enable `OIDC_LOGOUT_REDIRECT` to sign out at the provider after revoking the local session.
+- Link identities by verified issuer and `sub`. Preserve historical Entra links and migrate them on verified Microsoft sign-in without matching accounts by email. Existing accounts can explicitly connect a different provider using their password.
+- Use provider-neutral sign-in and account settings. Support return navigation from an external provider while retaining cross-site API protections.
+
+### Upgrading
+
+Database schema advances from **12 to 13**. Take and verify a backup before upgrading, retain the previous image and configuration, and reload open browser tabs afterward. Pending sign-in attempts must be restarted; existing account links and sessions are retained.
+
+New deployments use `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` or `_FILE`, and `AUTH_MODE=oidc` for enforced sign-in. Register `/api/auth/oidc/callback` with the provider. Updated Compose and Helm templates use OIDC settings and secret mounts; migrate installation values before adopting those templates. Legacy `ENTRA_*`, `AUTH_MODE=entra`, and the old callback remain supported by the application for existing deployments. Do not mix the two environment configurations.
+
+Keep the same Entra application client ID when migrating existing Microsoft links. For a different provider, link existing accounts before enforcing SSO. SSO-created accounts without a known password need a separate migration procedure; active administrators can use operator recovery. Provider logout is opt-in and requires the provider's discovered logout endpoint plus a registered post-logout redirect URI.
+
+**Releases through 0.3.1 cannot open schema 13.** Rolling back requires restoring the pre-upgrade schema 12 backup with the matching previous image and configuration, discarding changes made after that backup. See the [upgrade guide](docs/operations.md#upgrading-from-03x-to-040) and [identity migration instructions](docs/installation.md#migrating-existing-entra-installations).
 
 ## 0.3.1 — 2026-10-13
 

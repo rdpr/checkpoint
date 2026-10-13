@@ -46,7 +46,7 @@ Each installation has one organization and one application writer backed by SQLi
 
 See [installation and identity](docs/installation.md) for bootstrap, OIDC and deployment configuration. See [operations](docs/operations.md) for backup, restore, monitoring and upgrades.
 
-Upgrading from 0.1.0? Version 0.2.0 adds persistent folders and migrates the database. Read the [release notes](CHANGELOG.md#020--2026-10-12) and [upgrade guide](docs/operations.md#upgrading-from-010-to-020) before changing versions.
+Version 0.4.0 adds configurable OpenID Connect sign-in and migrates the database to schema 13. Read the [release notes](CHANGELOG.md#040--2026-10-13), [upgrade guide](docs/operations.md#upgrading-from-03x-to-040), and [Entra migration instructions](docs/installation.md#migrating-existing-entra-installations) before changing versions.
 
 ## A typical review
 

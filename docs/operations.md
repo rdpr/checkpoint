@@ -31,7 +31,7 @@ docker compose exec app python3 ops/container.py verify-backup /backups/manual-T
 
 A restore drill starts the actual application against a temporary database copy and checks integrity, HTTP health and frontend assets. It never replaces live data. Keep space on the data volume for another database copy and migration growth.
 
-Backups contain artifacts, attachments, discussions, reviews, account information and hashed credentials. Store them with restricted access. Local volumes and Kubernetes PVCs are not off-host protection: copy verified backups to your chosen independent destination and test restoration on another machine. Browser-local drafts are not included.
+Backups contain artifacts, attachments, discussions, reviews, account information and hashed credentials. When provider logout is enabled, they also contain signed ID tokens retained with active SSO sessions. Store them with restricted access. Local volumes and Kubernetes PVCs are not off-host protection: copy verified backups to your chosen independent destination and test restoration on another machine. Browser-local drafts are not included.
 
 ## Explicit upgrades
 
@@ -50,6 +50,18 @@ docker compose up -d backup
 The launcher checks schema compatibility before starting the application. Before migrating an older schema, it saves a rescue backup and boots the candidate on a disposable clone. A database newer than the image is refused. A failed portable upgrade requires operator intervention; there is no automatic rollback that could silently discard new writes.
 
 For Kubernetes, take and verify a backup through the app container, update the image/chart in private values, and run `helm upgrade`. Do not run multiple application replicas during the transition. Watch rollout and readiness before resuming normal use.
+
+### Upgrading from 0.3.x to 0.4.0
+
+Version 0.4.0 migrates schema 12 to 13 for issuer/subject identity links and optional provider logout. Historical Entra links, accounts, memberships and sessions remain; pending sign-in flows expire and must be restarted.
+
+1. Take and verify a backup with the previous release. Retain that release's image digest, configuration and schema 12 backup together.
+2. If adopting the new Compose or Helm templates, migrate the Entra settings and secret mounts to OIDC before starting them. Register the new callback URI and keep the same Entra application client ID. Existing deployment manifests can continue using the application's legacy Entra configuration. See [identity migration](installation.md#migrating-existing-entra-installations).
+3. Follow the explicit upgrade procedure above. The launcher verifies the candidate on a disposable clone and saves a rescue backup before migrating the installation.
+4. Check `/readyz` and `/api/health` (version `0.4.0`), reload browser tabs, and verify an existing account's sign-in, workspace access, artifact history and sign-out. If changing providers, explicitly link existing accounts before enforcing SSO.
+5. Resume scheduled backups and verify a new backup with 0.4.0.
+
+A release through 0.3.1 cannot open schema 13. To roll back, stop writers and restore the retained schema 12 backup with its matching image and configuration using the procedure below. Preserve newer work first: restoring loses writes after the backup.
 
 ### Upgrading from 0.1.0 to 0.2.0
 

@@ -26,7 +26,7 @@ For a schema change, add meaningful migration coverage using retained data from 
 
 1. Update version metadata and user-facing changelog. Document configuration or schema changes and rollback requirements.
 2. Merge the reviewed source into `main` and wait for all verification jobs to pass.
-3. Tag the chosen commit, for example `git tag -a v0.3.1 -m 'Checkpoint 0.3.1'`, then push that tag.
+3. Tag the chosen commit, for example `git tag -a v0.4.0 -m 'Checkpoint 0.4.0'`, then push that tag.
 4. Wait for the Release workflow and inspect the published assets and image digest.
 5. Upgrade installations separately using the [operations guide](operations.md).
 
