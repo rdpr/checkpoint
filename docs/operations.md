@@ -82,6 +82,6 @@ For Kubernetes, scale the StatefulSet to zero, wait for its pod and volume attac
 
 ## Access and incident handling
 
-Organization administrators can inspect and revoke personal/service credentials and offboard accounts. Offboarding revokes sessions, keys, memberships and issued invitations atomically. Transfer sole workspace ownership to a successor first. Entra directory changes do not automatically perform this operation.
+Organization administrators can inspect and revoke personal/service credentials and offboard accounts. Offboarding revokes sessions, keys, memberships and issued invitations atomically. Transfer sole workspace ownership to a successor first. Identity provider directory changes do not automatically perform this operation.
 
 The administrative audit log is stored transactionally with changes, but is not tamper-resistant against an operator controlling the database. Keep backups and use restricted operator access. Report security defects privately using [SECURITY.md](../SECURITY.md).

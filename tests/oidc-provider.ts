@@ -4,7 +4,7 @@ import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 export const tenantId = '11111111-1111-4111-8111-111111111111';
 export const clientId = '22222222-2222-4222-8222-222222222222';
-export async function identityProvider() {
+export async function identityProvider(hostname = '127.0.0.1') {
   const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const jwk = {
     ...keys.publicKey.export({ format: 'jwk' }),
@@ -14,12 +14,12 @@ export async function identityProvider() {
   };
   const codes = new Map<string, URLSearchParams>();
   const claims: Record<string, unknown> = {
-    tid: tenantId,
-    oid: '33333333-3333-4333-8333-333333333333',
+    sub: 'reviewer:alex',
     name: 'Alex Morgan',
     email: 'alex@example.test',
   };
-  const behavior = { corruptSignature: false };
+  const behavior = { corruptSignature: false, unavailable: false };
+  const requests: { authorization?: URL; logout?: URL } = {};
   let issuer = '';
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, issuer);
@@ -27,12 +27,14 @@ export async function identityProvider() {
       res.writeHead(status, { 'content-type': 'application/json' });
       res.end(JSON.stringify(body));
     };
+    if (behavior.unavailable) return json({ error: 'unavailable' }, 503);
     if (url.pathname === '/.well-known/openid-configuration')
       return json({
         issuer,
         authorization_endpoint: issuer + '/authorize',
         token_endpoint: issuer + '/token',
         jwks_uri: issuer + '/jwks',
+        end_session_endpoint: issuer + '/logout',
         response_types_supported: ['code'],
         subject_types_supported: ['public'],
         id_token_signing_alg_values_supported: ['RS256'],
@@ -40,7 +42,15 @@ export async function identityProvider() {
         code_challenge_methods_supported: ['S256'],
       });
     if (url.pathname === '/jwks') return json({ keys: [jwk] });
+    if (url.pathname === '/logout') {
+      requests.logout = url;
+      res.writeHead(302, {
+        location: url.searchParams.get('post_logout_redirect_uri')!,
+      });
+      return res.end();
+    }
     if (url.pathname === '/authorize') {
+      requests.authorization = url;
       const code = randomUUID();
       codes.set(code, url.searchParams);
       const redirect = new URL(url.searchParams.get('redirect_uri')!);
@@ -57,6 +67,7 @@ export async function identityProvider() {
       const original = codes.get(code);
       codes.delete(code);
       if (
+        req.headers.authorization ||
         !original ||
         params.get('client_secret') !== 'fixture-secret' ||
         params.get('client_id') !== clientId ||
@@ -71,7 +82,6 @@ export async function identityProvider() {
       const payload = encode({
         iss: issuer,
         aud: clientId,
-        sub: claims.oid,
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + 300,
         nonce: original.get('nonce'),
@@ -90,11 +100,12 @@ export async function identityProvider() {
     json({ error: 'not_found' }, 404);
   }).listen(0, '127.0.0.1');
   await new Promise<void>((resolve) => server.once('listening', resolve));
-  issuer = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  issuer = `http://${hostname}:${(server.address() as AddressInfo).port}`;
   return {
     issuer: new URL(issuer),
     claims,
     behavior,
+    requests,
     close: async () => {
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));

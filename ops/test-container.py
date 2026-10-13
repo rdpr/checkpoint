@@ -15,12 +15,12 @@ subprocess.run(['docker', 'info'], check=True, stdout=subprocess.DEVNULL)
 with tempfile.TemporaryDirectory(prefix='pw-compose-test-') as temporary:
     directory = Path(temporary)
     grafana_password = secrets.token_urlsafe(32)
-    for name, value in [('entra', ''), ('metrics', secrets.token_urlsafe(32)), ('grafana', grafana_password)]:
+    for name, value in [('oidc', ''), ('metrics', secrets.token_urlsafe(32)), ('grafana', grafana_password)]:
         (directory / name).write_text(value)
         (directory / name).chmod(0o444)  # Disposable test credentials; real installs restrict access.
     env = dict(os.environ, APP_ORIGIN='https://workspaces.example.test', APP_PORT='0',
                CHECKPOINT_IMAGE=os.environ.get('TEST_IMAGE', f'workspaces-test:{os.getpid()}'), AUTH_MODE='optional',
-               ENTRA_TENANT_ID='', ENTRA_CLIENT_ID='', ENTRA_SECRET_FILE=str(directory / 'entra'),
+               OIDC_ISSUER='', OIDC_CLIENT_ID='', OIDC_SCOPES='', OIDC_PROMPT='', OIDC_LOGOUT_REDIRECT='', OIDC_SECRET_FILE=str(directory / 'oidc'),
                METRICS_SECRET_FILE=str(directory / 'metrics'), GRAFANA_PASSWORD_FILE=str(directory / 'grafana'), GRAFANA_PORT='0')
     command = ['docker', 'compose', '-p', f'pw-test-{os.getpid()}', '-f', str(source / 'deploy/compose/compose.yaml'), '-f', str(source / 'deploy/compose/monitoring.yaml')]
     def compose(*args, **kwargs):

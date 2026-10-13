@@ -2,20 +2,21 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../server/store.ts';
-import { Entra } from '../server/entra.ts';
-import { identityProvider, tenantId, clientId } from './oidc-provider.ts';
+import { Oidc } from '../server/oidc.ts';
+import { identityProvider, clientId } from './oidc-provider.ts';
 import { createApp } from '../server/app.ts';
 const directory = mkdtempSync(join(tmpdir(), 'pw-browser-'));
 const store = new Store(join(directory, 'db.sqlite'));
-const provider = await identityProvider();
+const provider = await identityProvider('localhost');
 const server = createApp(store, {
   origins: ['http://127.0.0.1:4411'],
-  entra: new Entra({
-    tenantId,
+  oidc: new Oidc({
     clientId,
     clientSecret: 'fixture-secret',
     origin: 'http://127.0.0.1:4411',
-    testIssuer: provider.issuer,
+    issuer: provider.issuer.href.slice(0, -1),
+    allowInsecureRequests: true,
+    logoutRedirect: true,
   }),
 }).listen(4411, '127.0.0.1');
 function stop() {

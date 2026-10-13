@@ -1,3 +1,4 @@
+import { entraTenant, type OidcIdentity } from './oidc.ts';
 import { legacyFields } from './compatibility.ts';
 import { migrateLegacy } from './legacyMigration.ts';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
@@ -63,7 +64,7 @@ const expiry = (hours: number) =>
 const welcome =
   '# Review your first design\n\nUse this workspace to review specs and engineering decisions with your team and coding agents.\n\n## Start with a concrete proposal\n\nCreate an artifact such as `specs/webhook-delivery.md`. Include the problem, proposed architecture, alternatives, and questions for reviewers. Choose Markdown for a written spec, HTML for an interactive design preview, or a standalone Mermaid or Graphviz diagram.\n\n## Get feedback before the next step\n\n- Invite an engineer from **Members**, then use **Request review** on a saved revision.\n- Select a passage or pinpoint a diagram element to comment. Use **New discussion** for a broader design question.\n- Use **Finish review** to approve or request changes. The decision belongs to that exact revision.\n\n## Work with an agent\n\nOpen **Agent access** to create a scoped MCP key. Ask the agent to publish a spec, request your review, and read the feedback before revising or moving to implementation. Only people can make review decisions; Checkpoint records them without enforcing an execution gate.\n\n## Check what changed\n\nCompare revisions in **Activity** to see how feedback was addressed. Saved revisions and discussion remain available. Save edits explicitly; if someone saves first, your draft is preserved for reconciliation.\n';
 
-export const DATABASE_VERSION = 12;
+export const DATABASE_VERSION = 13;
 
 export class Store {
   readonly db: DatabaseSync;
@@ -86,6 +87,28 @@ export class Store {
     );
     migrateLegacy(this);
     this.migrateArtifacts();
+    this.migrateOidc();
+  }
+  private migrateOidc() {
+    this.transaction(() => {
+      if (
+        this.one<{ user_version: number }>('PRAGMA user_version')!
+          .user_version >= 13
+      )
+        return;
+      // Historical Entra links remain available until each signed identity is seen.
+      this.db.exec(`
+        CREATE TABLE oidc_identities (
+          issuer TEXT NOT NULL, subject TEXT NOT NULL,
+          user_id TEXT NOT NULL REFERENCES users(id),
+          PRIMARY KEY(issuer,subject), UNIQUE(issuer,user_id)
+        );
+        ALTER TABLE sessions ADD COLUMN oidc_issuer TEXT;
+        ALTER TABLE sessions ADD COLUMN oidc_id_token TEXT;
+        DELETE FROM identity_flows;
+        PRAGMA user_version=13;
+      `);
+    });
   }
   private migrateArtifacts() {
     this.transaction(() => {
@@ -509,22 +532,28 @@ export class Store {
     );
     return { id: row.id, name: row.name, email: row.email };
   }
-  session(user: User, authMethod: 'password' | 'entra' = 'password') {
+  session(
+    user: User,
+    authMethod: 'password' | 'entra' | 'oidc' = 'password',
+    identity?: { issuer: string; idToken: string },
+  ) {
     this.active({ user });
     this.run('DELETE FROM sessions WHERE expires_at<=?', now());
     const token = secret();
     this.run(
-      'INSERT INTO sessions(hash,user_id,expires_at,auth_method) VALUES(?,?,?,?)',
+      'INSERT INTO sessions(hash,user_id,expires_at,auth_method,oidc_issuer,oidc_id_token) VALUES(?,?,?,?,?,?)',
       digest(token),
       user.id,
-      expiry(authMethod === 'entra' ? 8 : 24 * 7),
+      expiry(authMethod === 'password' ? 24 * 7 : 8),
       authMethod,
+      identity?.issuer ?? null,
+      identity?.idToken ?? null,
     );
     return token;
   }
   sessionActor(token: string, requireSso = false): Actor | undefined {
     const row = this.one<{ userId: string }>(
-      `SELECT s.user_id userId FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.hash=? AND s.expires_at>? AND (?=0 OR s.auth_method='entra' OR u.recovery_until>?)`,
+      `SELECT s.user_id userId FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.hash=? AND s.expires_at>? AND (?=0 OR s.auth_method IN ('entra','oidc') OR u.recovery_until>?)`,
       digest(token),
       now(),
       Number(requireSso),
@@ -536,7 +565,13 @@ export class Store {
       : undefined;
   }
   logout(token: string) {
+    const identity = this.one<{ issuer: string; idToken: string }>(
+      'SELECT oidc_issuer issuer,oidc_id_token idToken FROM sessions WHERE hash=? AND expires_at>? AND oidc_id_token IS NOT NULL',
+      digest(token),
+      now(),
+    );
     this.run('DELETE FROM sessions WHERE hash=?', digest(token));
+    return identity;
   }
   tokenActor(token: string): Actor | undefined {
     const row = this.one<{
@@ -1856,7 +1891,7 @@ export class Store {
         this.one(
           `SELECT s.user_id FROM sessions s JOIN users u ON u.id=s.user_id
            WHERE s.hash=? AND s.user_id=? AND s.expires_at>?
-           AND (?=0 OR s.auth_method='entra' OR u.recovery_until>?)`,
+           AND (?=0 OR s.auth_method IN ('entra','oidc') OR u.recovery_until>?)`,
           actor.session.hash,
           actor.user.id,
           now(),
@@ -2370,7 +2405,7 @@ export class Store {
       )
     );
   }
-  identityStatus(actor: Actor) {
+  identityStatus(actor: Actor, issuer?: string) {
     this.active(actor);
     requireThat(
       !actor.token,
@@ -2380,8 +2415,11 @@ export class Store {
     );
     return {
       linked: !!this.one(
-        'SELECT user_id FROM identities WHERE user_id=?',
+        'SELECT user_id FROM oidc_identities WHERE user_id=? AND issuer=? UNION SELECT user_id FROM identities WHERE user_id=? AND tenant_id=?',
         actor.user.id,
+        issuer ?? '',
+        actor.user.id,
+        issuer ? (entraTenant(issuer) ?? '') : '',
       ),
     };
   }
@@ -2441,13 +2479,8 @@ export class Store {
       return flow;
     });
   }
-  async entraSignIn(
-    identity: {
-      tenantId: string;
-      objectId: string;
-      name?: string;
-      email?: string;
-    },
+  async oidcSignIn(
+    identity: OidcIdentity,
     flow: {
       userId: string | null;
       sessionHash: string | null;
@@ -2458,10 +2491,26 @@ export class Store {
     const password = flow.invitation ? await hashPassword(secret()) : '';
     return this.transaction(() => {
       const linked = this.one<{ userId: string }>(
-        'SELECT user_id userId FROM identities WHERE tenant_id=? AND object_id=?',
-        identity.tenantId,
-        identity.objectId,
+        'SELECT user_id userId FROM oidc_identities WHERE issuer=? AND subject=?',
+        identity.issuer,
+        identity.subject,
       );
+      const legacy =
+        identity.legacyEntra &&
+        entraTenant(identity.issuer) === identity.legacyEntra.tenantId
+          ? this.one<{ userId: string }>(
+              'SELECT user_id userId FROM identities WHERE tenant_id=? AND object_id=?',
+              identity.legacyEntra.tenantId,
+              identity.legacyEntra.objectId,
+            )
+          : undefined;
+      requireThat(
+        !linked || !legacy || linked.userId === legacy.userId,
+        409,
+        'identity_conflict',
+        'The identity links conflict. Contact your administrator.',
+      );
+      const existing = linked ?? legacy;
       let user: User | undefined;
       if (flow.userId) {
         requireThat(
@@ -2474,25 +2523,27 @@ export class Store {
             ),
           401,
           'session_expired',
-          'Sign in again before linking your Microsoft account.',
+          'Sign in again before linking your single sign-on identity.',
         );
         user = this.user(flow.userId);
         requireThat(
-          !linked || linked.userId === flow.userId,
+          !existing || existing.userId === flow.userId,
           409,
           'identity_linked',
-          'This Microsoft account is already linked to another account.',
+          'This single sign-on identity is already linked to another account.',
         );
         requireThat(
           !this.one(
-            'SELECT user_id FROM identities WHERE user_id=?',
+            'SELECT user_id FROM oidc_identities WHERE user_id=? AND issuer=? AND subject<>?',
             flow.userId,
+            identity.issuer,
+            identity.subject,
           ),
           409,
           'identity_linked',
-          'This account already has a Microsoft identity.',
+          'This account already has an identity for this provider.',
         );
-      } else if (linked) user = this.user(linked.userId);
+      } else if (existing) user = this.user(existing.userId);
       else {
         requireThat(
           flow.invitation,
@@ -2508,7 +2559,7 @@ export class Store {
           !this.one('SELECT id FROM users WHERE email=?', data.email),
           409,
           'link_required',
-          'This email already has an account. Sign in with its password and connect Microsoft from Account.',
+          'This email already has an account. Sign in with its password and connect single sign-on from Account.',
         );
         user = this.insertUser(data, password);
       }
@@ -2519,14 +2570,24 @@ export class Store {
         'This account is unavailable. Contact your administrator.',
       );
       if (!linked) {
+        requireThat(
+          !this.one(
+            'SELECT user_id FROM oidc_identities WHERE issuer=? AND user_id=?',
+            identity.issuer,
+            user.id,
+          ),
+          409,
+          'identity_linked',
+          'This account already has an identity for this provider. Contact your administrator if the provider changed your subject.',
+        );
         this.run(
-          'INSERT INTO identities VALUES(?,?,?)',
-          identity.tenantId,
-          identity.objectId,
+          'INSERT INTO oidc_identities(issuer,subject,user_id) VALUES(?,?,?)',
+          identity.issuer,
+          identity.subject,
           user.id,
         );
         this.audit({ user }, 'identity.linked', user.name, {
-          tenantId: identity.tenantId,
+          issuer: identity.issuer,
           userId: user.id,
         });
       }
@@ -2570,7 +2631,7 @@ export class Store {
       return {
         ok: true,
         message:
-          'Password reset; existing sessions and agent keys revoked. Password sign-in is allowed for one hour, including when Entra is required.',
+          'Password reset; existing sessions and agent keys revoked. Password sign-in is allowed for one hour, including when single sign-on is required.',
       };
     });
   }

@@ -23,7 +23,7 @@ Checkpoint is a self-hosted review workspace for engineering teams and coding ag
 - **Know exactly what was reviewed.** Approvals and requested changes belong to a saved revision. Compare revisions to see how feedback was addressed; new edits never inherit an old approval.
 - **Keep the decision and its context.** Preserve discussion and revision history, restore earlier content, or export feedback for an agent’s next task.
 - **Coordinate review across projects.** Organize artifacts in folders, search across your workspaces, and follow assigned requests in My reviews. In-app notifications surface replies and review outcomes.
-- **Control access on your infrastructure.** Scope agent credentials to a workspace, manage team membership and service accounts, and use optional Microsoft Entra sign-in. Organization administration and access changes have an audit trail.
+- **Control access on your infrastructure.** Scope agent credentials to a workspace, manage team membership and service accounts, and use optional OpenID Connect sign-in (including Microsoft Entra). Organization administration and access changes have an audit trail.
 
 Review **Markdown**, **HTML previews**, **Mermaid and Graphviz diagrams** using Plannotator’s existing viewers and annotation tools. Create an artifact by choosing its format or importing a UTF-8 file. Markdown includes code, math, and images; HTML supports text selections and element pinpoints, including multiple targets in one discussion. Use Markup to open the selection toolbar, or Comment to open a discussion directly. HTML supports comments and Looks good; redlines and other quick labels are available in the Markdown viewer. Switch to Interact to try a preview’s controls.
 
@@ -44,7 +44,7 @@ Get the deployment bundle or chart from [Releases](https://github.com/rdpr/check
 
 Each installation has one organization and one application writer backed by SQLite. Images, discussions, reviews and account records are included in database backups. Kubernetes does not turn this into a multi-replica application. Use local or single-writer block storage, and allow brief downtime for upgrades.
 
-See [installation and identity](docs/installation.md) for bootstrap, Entra and deployment configuration. See [operations](docs/operations.md) for backup, restore, monitoring and upgrades.
+See [installation and identity](docs/installation.md) for bootstrap, OIDC and deployment configuration. See [operations](docs/operations.md) for backup, restore, monitoring and upgrades.
 
 Upgrading from 0.1.0? Version 0.2.0 adds persistent folders and migrates the database. Read the [release notes](CHANGELOG.md#020--2026-10-12) and [upgrade guide](docs/operations.md#upgrading-from-010-to-020) before changing versions.
 

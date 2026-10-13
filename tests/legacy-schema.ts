@@ -3,6 +3,9 @@ import type { DatabaseSync } from 'node:sqlite';
 // This deliberately uses real SQLite DDL; no store or authorization mocks.
 export function legacyNames(db: DatabaseSync) {
   db.exec(`
+    DROP TABLE oidc_identities;
+    ALTER TABLE sessions DROP COLUMN oidc_issuer;
+    ALTER TABLE sessions DROP COLUMN oidc_id_token;
     DROP TRIGGER artifact_catalog_insert; DROP TRIGGER artifact_catalog_update;
     DROP TRIGGER folder_catalog_insert; DROP TRIGGER folder_catalog_update; DROP TRIGGER folder_catalog_delete;
     ALTER TABLE artifacts DROP COLUMN folder_id; DROP TABLE folders;

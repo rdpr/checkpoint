@@ -31,7 +31,11 @@ test(
       AUTH_MODE: 'optional',
     };
     for (const key of Object.keys(env))
-      if (key.startsWith('ENTRA_') || key.startsWith('METRICS_TOKEN'))
+      if (
+        key.startsWith('ENTRA_') ||
+        key.startsWith('OIDC_') ||
+        key.startsWith('METRICS_TOKEN')
+      )
         delete (env as Record<string, unknown>)[key];
     const cli = (...args: string[]) =>
       exec('python3', ['ops/container.py', ...args], { env });
@@ -187,7 +191,11 @@ test(
       AUTH_MODE: 'optional',
     };
     for (const key of Object.keys(env))
-      if (key.startsWith('ENTRA_') || key.startsWith('METRICS_TOKEN'))
+      if (
+        key.startsWith('ENTRA_') ||
+        key.startsWith('OIDC_') ||
+        key.startsWith('METRICS_TOKEN')
+      )
         delete (env as Record<string, unknown>)[key];
     let child: ChildProcess | undefined;
     try {

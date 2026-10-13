@@ -1,6 +1,6 @@
 {{- if not (has .Values.storage.accessMode (list "ReadWriteOncePod" "ReadWriteOnce")) }}{{ fail "Use single-writer block storage: ReadWriteOncePod or ReadWriteOnce" }}{{ end }}
-{{- if not (has .Values.authMode (list "optional" "entra")) }}{{ fail "authMode must be optional or entra" }}{{ end }}
-{{- if and (eq .Values.authMode "entra") (not .Values.entra.secretName) }}{{ fail "Enforced Entra requires an existing client secret" }}{{ end }}
+{{- if not (has .Values.authMode (list "optional" "oidc")) }}{{ fail "authMode must be optional or oidc" }}{{ end }}
+{{- if and (eq .Values.authMode "oidc") (not .Values.oidc.secretName) }}{{ fail "Enforced OIDC requires an existing client secret" }}{{ end }}
 {{- if not (hasPrefix "https://" .Values.origin) }}{{ fail "origin must be an HTTPS origin" }}{{ end }}
 apiVersion: v1
 kind: Service
@@ -46,12 +46,15 @@ spec:
             - {name: APP_ORIGIN, value: {{ required "origin is required" .Values.origin | quote }}}
             - {name: AUTH_MODE, value: {{ .Values.authMode | quote }}}
             - {name: TRUSTED_PROXIES, value: {{ join "," .Values.trustedProxies | quote }}}
-            {{- if .Values.entra.secretName }}
-            - {name: ENTRA_TENANT_ID, value: {{ required "entra.tenantId required" .Values.entra.tenantId | quote }}}
-            - {name: ENTRA_CLIENT_ID, value: {{ required "entra.clientId required" .Values.entra.clientId | quote }}}
-            - name: ENTRA_CLIENT_SECRET
+            {{- if .Values.oidc.secretName }}
+            - {name: OIDC_ISSUER, value: {{ required "oidc.issuer required" .Values.oidc.issuer | quote }}}
+            - {name: OIDC_CLIENT_ID, value: {{ required "oidc.clientId required" .Values.oidc.clientId | quote }}}
+            - {name: OIDC_SCOPES, value: {{ .Values.oidc.scopes | quote }}}
+            - {name: OIDC_PROMPT, value: {{ .Values.oidc.prompt | quote }}}
+            - {name: OIDC_LOGOUT_REDIRECT, value: {{ .Values.oidc.logoutRedirect | quote }}}
+            - name: OIDC_CLIENT_SECRET
               valueFrom:
-                secretKeyRef: {name: {{ .Values.entra.secretName }}, key: client-secret}
+                secretKeyRef: {name: {{ .Values.oidc.secretName }}, key: client-secret}
             {{- end }}
             {{- if .Values.metrics.secretName }}
             - name: METRICS_TOKEN

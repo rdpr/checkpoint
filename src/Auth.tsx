@@ -14,11 +14,11 @@ export function Auth({
   invitation,
   inviteName,
   onSignedIn,
-  entraEnabled = false,
+  oidcEnabled = false,
   requireSso = false,
 }: {
   needsSetup: boolean;
-  entraEnabled?: boolean;
+  oidcEnabled?: boolean;
   requireSso?: boolean;
   setupAllowed: boolean;
   invitation: string | null;
@@ -76,7 +76,7 @@ export function Auth({
       </div>
       <main className="auth-form-wrap">
         <form onSubmit={submit} className="auth-form">
-          {entraEnabled && !needsSetup && (
+          {oidcEnabled && !needsSetup && (
             <>
               <button
                 type="button"
@@ -87,7 +87,7 @@ export function Auth({
                   setError(null);
                   try {
                     const result = await post<{ url: string }>(
-                      '/auth/entra/start',
+                      '/auth/oidc/start',
                       { invitation: invitation ?? undefined },
                     );
                     try {
@@ -106,12 +106,12 @@ export function Auth({
                   }
                 }}
               >
-                Sign in with Microsoft
+                Sign in with single sign-on
               </button>
               <p className="small muted">
                 {requireSso
-                  ? 'Microsoft sign-in is required. Password sign-in is reserved for administrator recovery.'
-                  : 'Existing account? Sign in with your password first, then connect Microsoft from Account.'}
+                  ? 'Single sign-on is required. Password sign-in is reserved for administrator recovery.'
+                  : 'Existing account? Sign in with your password first, then connect single sign-on from Account.'}
               </p>
             </>
           )}

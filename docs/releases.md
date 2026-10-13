@@ -20,7 +20,7 @@ Pull requests and pushes to `main` run:
 
 The release workflow reruns verification for the tag, then publishes the exact container tested by Compose and Kubernetes. It does not rebuild the image after those checks. Third-party Actions are pinned to commits; the runtime base image is pinned to a digest. Dependency updates arrive through Dependabot, except the deliberately pinned Plannotator integration, which requires manual compatibility review.
 
-For a schema change, add meaningful migration coverage using retained data from the previous supported schema. The integration suite covers the schema 11 to 12 transition with retained artifacts, archived paths, discussions, review decisions, aliases and comment retry receipts. Rehearse each schema upgrade with the previous release and a representative disposable backup, and verify a post-upgrade backup with the candidate. Retain the old release and pre-upgrade backup together.
+For a schema change, add meaningful migration coverage using retained data from the previous supported schema. The integration suite covers the schema 11 artifact transition with retained artifacts, archived paths, discussions, review decisions, aliases and comment retry receipts, plus the schema 12 to 13 OIDC transition with retained Entra links and sessions. Rehearse each schema upgrade with the previous release and a representative disposable backup, and verify a post-upgrade backup with the candidate. Retain the old release and pre-upgrade backup together.
 
 ## Prepare a release
 

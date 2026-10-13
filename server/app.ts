@@ -8,7 +8,7 @@ import express, {
 import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
-import type { Entra } from './entra.ts';
+import type { Oidc } from './oidc.ts';
 import { monitoring } from './metrics.ts';
 import { z } from 'zod';
 import { Store, type Actor } from './store.ts';
@@ -18,7 +18,7 @@ import { authenticationLimiter, trustedProxyAddresses } from './authLimits.ts';
 
 export interface AppOptions {
   origins: string[];
-  entra?: Entra;
+  oidc?: Oidc;
   requireSso?: boolean;
   metricsToken?: string;
   dataDir?: string;
@@ -49,8 +49,10 @@ export function createApp(store: Store, options: AppOptions) {
     store.sessionActor(sessionCookie(req), options.requireSso);
   const callback = (req: Request) =>
     req.method === 'GET' &&
-    req.path === '/api/auth/entra/callback' &&
-    !!options.entra;
+    ['/api/auth/oidc/callback', '/api/auth/entra/callback'].includes(
+      req.path,
+    ) &&
+    !!options.oidc;
   const origins = new Set(options.origins.map((o) => new URL(o).origin));
   const hosts = new Set(options.origins.map((o) => new URL(o).host));
   app.use((req, res, next) => {
@@ -79,7 +81,18 @@ export function createApp(store: Store, options: AppOptions) {
         code: 'invalid_origin',
         message: 'This origin is not allowed.',
       });
-    if (req.get('sec-fetch-site') === 'cross-site' && !callback(req))
+    // The public app shell must accept the browser's return from an external IdP.
+    // API reads and writes still reject cross-site requests.
+    const publicNavigation =
+      req.method === 'GET' &&
+      req.path === '/' &&
+      req.get('sec-fetch-mode') === 'navigate' &&
+      req.get('sec-fetch-dest') === 'document';
+    if (
+      req.get('sec-fetch-site') === 'cross-site' &&
+      !callback(req) &&
+      !publicNavigation
+    )
       return res.status(403).json({
         code: 'cross_site',
         message: 'Cross-site requests are not allowed.',
@@ -119,20 +132,22 @@ export function createApp(store: Store, options: AppOptions) {
       '/api/auth/login',
       '/api/auth/register',
       '/api/auth/entra/start',
+      '/api/auth/oidc/start',
     ],
     authenticationLimiter(),
   );
   const signIn = (
     res: Response,
     user: Parameters<Store['session']>[0],
-    method: 'password' | 'entra' = 'password',
+    method: 'password' | 'oidc' = 'password',
     redirect = false,
+    identity?: { issuer: string; idToken: string },
   ) => {
-    res.cookie('pw_session', store.session(user, method), {
+    res.cookie('pw_session', store.session(user, method, identity), {
       httpOnly: true,
       sameSite: 'strict',
       secure: options.secureCookies ?? false,
-      maxAge: (method === 'entra' ? 8 : 7 * 24) * 3600000,
+      maxAge: (method === 'oidc' ? 8 : 7 * 24) * 3600000,
       path: '/',
     });
     return redirect ? res.redirect(303, '/') : res.json({ user });
@@ -183,7 +198,7 @@ export function createApp(store: Store, options: AppOptions) {
       needsSetup: store.needsSetup(),
       setupAllowed: options.allowSetup !== false,
       user: browserActor(req)?.user ?? null,
-      entraEnabled: !!options.entra,
+      oidcEnabled: !!options.oidc,
       requireSso: !!options.requireSso,
     }),
   );
@@ -202,7 +217,7 @@ export function createApp(store: Store, options: AppOptions) {
       store.passwordAllowed(user, !!options.requireSso),
       403,
       'sso_required',
-      'Use Microsoft sign-in. Local recovery is available to the server operator.',
+      'Use single sign-on. Local recovery is available to the server operator.',
     );
     return signIn(res, user);
   });
@@ -211,114 +226,134 @@ export function createApp(store: Store, options: AppOptions) {
       !options.requireSso,
       403,
       'sso_required',
-      'Accept this invitation with Microsoft sign-in.',
+      'Accept this invitation with single sign-on.',
     );
     return signIn(res, await store.register(req.body));
   });
   app.get('/api/auth/identity', (req, res) => {
     const actor = browserActor(req);
     requireThat(actor, 401, 'unauthorized', 'Sign in first.');
-    res.json({ ...store.identityStatus(actor), enabled: !!options.entra });
-  });
-  app.post('/api/auth/entra/start', async (req, res) => {
-    requireThat(
-      options.entra,
-      404,
-      'not_configured',
-      'Microsoft sign-in is not configured.',
-    );
-    const input = z
-      .object({
-        mode: z.enum(['login', 'link']).default('login'),
-        password: z.string().optional(),
-        invitation: z.string().min(32).max(128).optional(),
-      })
-      .parse(req.body);
-    let userId: string | undefined;
-    if (input.mode === 'link') {
-      const actor = browserActor(req);
-      requireThat(
-        actor,
-        401,
-        'unauthorized',
-        'Sign in before connecting Microsoft.',
-      );
-      const user = await store.login({
-        email: actor.user.email,
-        password: input.password,
-      });
-      requireThat(
-        user.id === actor.user.id,
-        401,
-        'unauthorized',
-        'Verify your password.',
-      );
-      userId = user.id;
-    }
-    let start;
-    try {
-      start = await options.entra.start();
-    } catch {
-      throw new AppError(
-        503,
-        'identity_unavailable',
-        'Microsoft sign-in is unavailable. Try again shortly.',
-      );
-    }
-    const browser = secret();
-    store.beginIdentityFlow({
-      ...start,
-      browser,
-      userId,
-      session: userId ? sessionCookie(req) : undefined,
-      invitation: input.invitation,
+    res.json({
+      ...store.identityStatus(actor, options.oidc?.options.issuer),
+      enabled: !!options.oidc,
     });
-    res.cookie('pw_oidc', browser, {
-      httpOnly: true,
-      sameSite: 'lax',
-      secure: options.secureCookies ?? false,
-      maxAge: 600000,
-      path: '/api/auth/entra',
-    });
-    res.json({ url: start.url });
   });
-  app.get('/api/auth/entra/callback', async (req, res) => {
-    try {
+  app.post(
+    ['/api/auth/oidc/start', '/api/auth/entra/start'],
+    async (req, res) => {
       requireThat(
-        options.entra,
+        options.oidc,
         404,
         'not_configured',
-        'Microsoft sign-in is not configured.',
+        'Single sign-on is not configured.',
       );
-      const browser =
-        req.headers.cookie
-          ?.split(';')
-          .map((s) => s.trim())
-          .find((s) => s.startsWith('pw_oidc='))
-          ?.slice(8) ?? '';
-      const state = z.string().min(16).max(256).parse(req.query.state);
-      const flow = store.consumeIdentityFlow(state, browser);
-      const identity = await options.entra.complete(
-        new URL(req.originalUrl, options.entra.options.origin),
-        flow,
-        state,
-      );
-      const user = await store.entraSignIn(identity, flow);
-      res.clearCookie('pw_oidc', { path: '/api/auth/entra' });
-      return signIn(res, user, 'entra', true);
-    } catch (error) {
-      res.clearCookie('pw_oidc', { path: '/api/auth/entra' });
-      const message =
-        error instanceof AppError
-          ? error.message
-          : 'Microsoft sign-in could not be verified. Start again or contact your administrator.';
-      return res.redirect(303, '/?signinError=' + encodeURIComponent(message));
-    }
-  });
-  app.post('/api/auth/logout', (req, res) => {
-    store.logout(sessionCookie(req));
+      const input = z
+        .object({
+          mode: z.enum(['login', 'link']).default('login'),
+          password: z.string().optional(),
+          invitation: z.string().min(32).max(128).optional(),
+        })
+        .parse(req.body);
+      let userId: string | undefined;
+      if (input.mode === 'link') {
+        const actor = browserActor(req);
+        requireThat(
+          actor,
+          401,
+          'unauthorized',
+          'Sign in before connecting single sign-on.',
+        );
+        const user = await store.login({
+          email: actor.user.email,
+          password: input.password,
+        });
+        requireThat(
+          user.id === actor.user.id,
+          401,
+          'unauthorized',
+          'Verify your password.',
+        );
+        userId = user.id;
+      }
+      let start;
+      try {
+        start = await options.oidc.start();
+      } catch {
+        throw new AppError(
+          503,
+          'identity_unavailable',
+          'Single sign-on is unavailable. Try again shortly.',
+        );
+      }
+      const browser = secret();
+      store.beginIdentityFlow({
+        ...start,
+        browser,
+        userId,
+        session: userId ? sessionCookie(req) : undefined,
+        invitation: input.invitation,
+      });
+      res.cookie('pw_oidc', browser, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: options.secureCookies ?? false,
+        maxAge: 600000,
+        path: '/api/auth',
+      });
+      res.json({ url: start.url });
+    },
+  );
+  app.get(
+    ['/api/auth/oidc/callback', '/api/auth/entra/callback'],
+    async (req, res) => {
+      try {
+        requireThat(
+          options.oidc,
+          404,
+          'not_configured',
+          'Single sign-on is not configured.',
+        );
+        const browser =
+          req.headers.cookie
+            ?.split(';')
+            .map((s) => s.trim())
+            .find((s) => s.startsWith('pw_oidc='))
+            ?.slice(8) ?? '';
+        const state = z.string().min(16).max(256).parse(req.query.state);
+        const flow = store.consumeIdentityFlow(state, browser);
+        const identity = await options.oidc.complete(
+          new URL(req.originalUrl, options.oidc.options.origin),
+          flow,
+          state,
+        );
+        const user = await store.oidcSignIn(identity, flow);
+        res.clearCookie('pw_oidc', { path: '/api/auth' });
+        return signIn(
+          res,
+          user,
+          'oidc',
+          true,
+          options.oidc.options.logoutRedirect ? identity : undefined,
+        );
+      } catch (error) {
+        res.clearCookie('pw_oidc', { path: '/api/auth' });
+        const message =
+          error instanceof AppError
+            ? error.message
+            : 'Single sign-on could not be verified. Start again or contact your administrator.';
+        return res.redirect(
+          303,
+          '/?signinError=' + encodeURIComponent(message),
+        );
+      }
+    },
+  );
+  app.post('/api/auth/logout', async (req, res) => {
+    const identity = store.logout(sessionCookie(req));
     res.clearCookie('pw_session', { path: '/' });
-    res.json({ ok: true });
+    // Local revocation succeeds even while the provider is unavailable.
+    const url = await options.oidc?.logoutUrl(identity).catch(() => undefined);
+    res.json({ ok: true, ...(url ? { url } : {}) });
   });
   app.post('/api/invitations/inspect', (req, res) =>
     res.json(

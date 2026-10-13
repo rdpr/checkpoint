@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Add configurable OpenID Connect sign-in with issuer discovery, scopes, optional prompt and provider logout, and explicit `client_secret_post` authentication.
+- Key identities by issuer and subject; preserve and migrate existing Entra links on verified sign-in. Legacy Entra configuration remains supported; deployment templates now use `OIDC_*` settings.
+
 ## 0.3.1 — 2026-10-13
 
 ### Security and reliability

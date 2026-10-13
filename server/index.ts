@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { Store } from './store.ts';
 import { createApp } from './app.ts';
-import { entraFromEnvironment, readSecret } from './entra.ts';
+import { oidcFromEnvironment, readSecret } from './oidc.ts';
 
 const port = Number(process.env.PORT ?? 4310);
 if (!Number.isInteger(port) || port < 1 || port > 65535)
@@ -25,15 +25,17 @@ if (
   throw new Error(
     'Production frontend is missing. Build this release before starting it.',
   );
-const entra = entraFromEnvironment(origin);
-const requireSso = process.env.AUTH_MODE === 'entra';
+const oidc = oidcFromEnvironment(origin);
+const requireSso = ['oidc', 'entra'].includes(process.env.AUTH_MODE ?? '');
 if (
   process.env.AUTH_MODE &&
-  !['optional', 'entra'].includes(process.env.AUTH_MODE)
+  !['optional', 'oidc', 'entra'].includes(process.env.AUTH_MODE)
 )
-  throw new Error('AUTH_MODE must be optional or entra.');
-if (requireSso && !entra)
-  throw new Error('AUTH_MODE=entra requires Entra configuration.');
+  throw new Error(
+    'AUTH_MODE must be optional or oidc (entra is a legacy alias).',
+  );
+if (requireSso && !oidc)
+  throw new Error('Enforced single sign-on requires OIDC configuration.');
 const metricsToken = readSecret('METRICS_TOKEN');
 if (metricsToken && metricsToken.length < 32)
   throw new Error('METRICS_TOKEN must contain at least 32 characters.');
@@ -41,7 +43,7 @@ const store = new Store(
   resolve(process.env.DATA_DIR ?? '.data', 'workspaces.sqlite'),
 );
 const app = createApp(store, {
-  entra,
+  oidc,
   requireSso,
   metricsToken,
   dataDir: resolve(process.env.DATA_DIR ?? '.data'),

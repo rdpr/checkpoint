@@ -108,7 +108,7 @@ def environment(config, release, data, port=None, maintenance=None):
     if port:
         env['AUTH_MODE'] = 'optional'
         for key in list(env):
-            if key.startswith('ENTRA_') or key.startswith('METRICS_TOKEN'):
+            if key.startswith('ENTRA_') or key.startswith('OIDC_') or key.startswith('METRICS_TOKEN'):
                 env.pop(key, None)
     env.pop('MAINTENANCE_FILE', None)
     if maintenance:

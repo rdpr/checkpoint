@@ -8,10 +8,10 @@ import type { AddressInfo } from 'node:net';
 import { spawnSync } from 'node:child_process';
 import { Store } from '../server/store.ts';
 import { createApp } from '../server/app.ts';
-import { Entra } from '../server/entra.ts';
-import { identityProvider, tenantId, clientId } from './oidc-provider.ts';
+import { Oidc } from '../server/oidc.ts';
+import { identityProvider, clientId } from './oidc-provider.ts';
 
-test('Entra HTTP flow links explicitly, validates signed claims, accepts invitations, and respects recovery and offboarding', async () => {
+test('OIDC HTTP flow links explicitly, validates signed claims, accepts invitations, and respects recovery and offboarding', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pw-identity-'));
   let store = new Store(join(directory, 'workspaces.sqlite'));
   const provider = await identityProvider();
@@ -29,12 +29,13 @@ test('Entra HTTP flow links explicitly, validates signed claims, accepts invitat
     origins: [base],
     serveStatic: false,
     requireSso: false,
-    entra: new Entra({
-      tenantId,
+    oidc: new Oidc({
       clientId,
       clientSecret: 'fixture-secret',
       origin: base,
-      testIssuer: provider.issuer,
+      issuer: provider.issuer.href.slice(0, -1),
+      allowInsecureRequests: true,
+      logoutRedirect: true,
     }),
   };
   server.on('request', createApp(store, options));
@@ -55,7 +56,7 @@ test('Entra HTTP flow links explicitly, validates signed claims, accepts invitat
       .find((s) => s.startsWith('pw_session='))
       ?.split(';')[0] ?? '';
   const start = async (body = {}, session = '') => {
-    const response = await request('/api/auth/entra/start', session, body);
+    const response = await request('/api/auth/oidc/start', session, body);
     assert.equal(response.status, 200, await response.clone().text());
     const url = (await response.json()).url;
     const authorized = await fetch(url, { redirect: 'manual' });
@@ -73,6 +74,14 @@ test('Entra HTTP flow links explicitly, validates signed claims, accepts invitat
     const noLink = await finish(await start());
     assert.match(noLink.headers.get('location')!, /signinError=/);
     assert.equal(cookie(noLink), '');
+    assert.equal(
+      provider.requests.authorization?.searchParams.get('scope'),
+      'openid profile email',
+    );
+    assert.equal(
+      provider.requests.authorization?.searchParams.has('prompt'),
+      false,
+    );
     const login = await request('/api/auth/login', '', ownerInput),
       local = cookie(login);
     assert.ok(local);
@@ -101,7 +110,7 @@ test('Entra HTTP flow links explicitly, validates signed claims, accepts invitat
       enabled: true,
     });
     for (const [field, value] of [
-      ['tid', '44444444-4444-4444-8444-444444444444'],
+      ['iss', 'https://wrong-issuer.example'],
       ['aud', 'wrong-audience'],
       ['nonce', 'wrong-nonce'],
     ]) {
@@ -111,6 +120,90 @@ test('Entra HTTP flow links explicitly, validates signed claims, accepts invitat
       if (previous === undefined) delete provider.claims[field];
       else provider.claims[field] = previous;
     }
+    const subject = provider.claims.sub;
+    delete provider.claims.sub;
+    assert.equal(cookie(await finish(await start())), '');
+    provider.claims.sub = subject;
+    // Neither display claims nor Entra-looking claims define a generic identity.
+    provider.claims.email = 'changed@example.test';
+    provider.claims.oid = 'some-other-object';
+    provider.claims.tid = 'some-other-tenant';
+    const stable = await finish(await start());
+    assert.equal(
+      (await (await request('/api/auth/status', cookie(stable))).json()).user
+        .id,
+      owner.user.id,
+    );
+    provider.claims.email = ownerInput.email;
+    options.oidc = new Oidc({
+      ...options.oidc.options,
+      scopes: 'openid email custom:review',
+      prompt: 'login',
+    });
+    assert.ok(cookie(await finish(await start())));
+    assert.equal(
+      provider.requests.authorization?.searchParams.get('scope'),
+      'openid email custom:review',
+    );
+    assert.equal(
+      provider.requests.authorization?.searchParams.get('prompt'),
+      'login',
+    );
+    // Same subject from another issuer must not find the existing identity.
+    const otherProvider = await identityProvider();
+    const configured = options.oidc;
+    try {
+      options.oidc = new Oidc({
+        ...configured.options,
+        issuer: otherProvider.issuer.href.slice(0, -1),
+      });
+      assert.equal(cookie(await finish(await start())), '');
+      assert.equal(
+        (await (await request('/api/auth/identity', sso)).json()).linked,
+        false,
+      );
+    } finally {
+      options.oidc = configured;
+      await otherProvider.close();
+    }
+    // Logout removes the session before returning an RP-Initiated Logout URL.
+    const signedOut = await (
+      await request('/api/auth/logout', cookie(stable), {})
+    ).json();
+    assert.equal(
+      (await request('/api/workspaces', cookie(stable))).status,
+      401,
+    );
+    const logoutUrl = new URL(signedOut.url);
+    assert.equal(logoutUrl.origin, provider.issuer.origin);
+    assert.equal(
+      logoutUrl.searchParams.get('post_logout_redirect_uri'),
+      base + '/',
+    );
+    assert.ok(logoutUrl.searchParams.get('id_token_hint'));
+    assert.equal(logoutUrl.searchParams.get('client_id'), clientId);
+    assert.equal(
+      (await fetch(logoutUrl, { redirect: 'manual' })).headers.get('location'),
+      base + '/',
+    );
+    // A discovery outage cannot prevent local logout, and password logout stays local.
+    const temporary = cookie(await finish(await start()));
+    options.oidc = new Oidc(configured.options);
+    provider.behavior.unavailable = true;
+    assert.deepEqual(
+      await (await request('/api/auth/logout', temporary, {})).json(),
+      { ok: true },
+    );
+    assert.equal((await request('/api/workspaces', temporary)).status, 401);
+    provider.behavior.unavailable = false;
+    options.oidc = configured;
+    const passwordSession = cookie(
+      await request('/api/auth/login', '', ownerInput),
+    );
+    assert.deepEqual(
+      await (await request('/api/auth/logout', passwordSession, {})).json(),
+      { ok: true },
+    );
     provider.behavior.corruptSignature = true;
     assert.equal(cookie(await finish(await start())), '');
     provider.behavior.corruptSignature = false;
@@ -123,7 +216,7 @@ test('Entra HTTP flow links explicitly, validates signed claims, accepts invitat
       403,
     );
     const invitation = store.invite(owner, workspace.id, { role: 'viewer' });
-    provider.claims.oid = '55555555-5555-4555-8555-555555555555';
+    provider.claims.sub = '55555555-5555-4555-8555-555555555555';
     // Same email with another identity cannot take over an existing account through an invite.
     assert.equal(
       cookie(await finish(await start({ invitation: invitation.token }))),

@@ -67,7 +67,7 @@ export function App() {
     user: User | null;
     needsSetup: boolean;
     setupAllowed: boolean;
-    entraEnabled: boolean;
+    oidcEnabled: boolean;
     requireSso: boolean;
   } | null>(null);
   const [error, setError] = useState<string | null>(() =>
@@ -177,7 +177,7 @@ export function App() {
           </div>
         )}
         <Auth
-          entraEnabled={status.entraEnabled}
+          oidcEnabled={status.oidcEnabled}
           requireSso={status.requireSso}
           needsSetup={status.needsSetup}
           setupAllowed={status.setupAllowed}
@@ -216,10 +216,10 @@ export function App() {
         key={status.user.id}
         user={status.user}
         onLogout={async () => {
-          await post('/auth/logout');
+          const result = await post<{ url?: string }>('/auth/logout');
           setIdentity(null);
           sessionStorage.removeItem('pw-return');
-          location.assign('/');
+          location.assign(result.url ?? '/');
         }}
       />
       {error && !invitation && (

@@ -37,11 +37,11 @@ export function Account({ onClose }: { onClose: () => void }) {
         )
       ) : status.linked ? (
         <p>
-          Your Microsoft account is connected. You can use Microsoft sign-in on
+          Your single sign-on identity is connected. You can use single sign-on on
           this installation.
         </p>
       ) : !status.enabled ? (
-        <p>Microsoft sign-in has not been configured for this installation.</p>
+        <p>Single sign-on has not been configured for this installation.</p>
       ) : (
         <form
           className="stack-form"
@@ -51,7 +51,7 @@ export function Account({ onClose }: { onClose: () => void }) {
             setBusy(true);
             setError(null);
             try {
-              const result = await post<{ url: string }>('/auth/entra/start', {
+              const result = await post<{ url: string }>('/auth/oidc/start', {
                 mode: 'link',
                 password,
               });
@@ -63,9 +63,9 @@ export function Account({ onClose }: { onClose: () => void }) {
           }}
         >
           <p>
-            Connect Microsoft to this account without changing your workspaces
+            Connect single sign-on to this account without changing your workspaces
             or permissions. Confirm your current password, then sign in with
-            Microsoft.
+            your identity provider.
           </p>
           <label>
             Current password
@@ -77,7 +77,7 @@ export function Account({ onClose }: { onClose: () => void }) {
             />
           </label>
           <button className="button primary" disabled={busy}>
-            Connect Microsoft account
+            Connect single sign-on
           </button>
         </form>
       )}

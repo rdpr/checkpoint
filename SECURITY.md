@@ -15,7 +15,7 @@ Security fixes target the newest published release. Review release notes before 
 ## Operator responsibilities
 
 - Expose the application through HTTPS and restrict access to the intended company network or users.
-- Configure Entra and invitations for your organization; protect operator access and recovery procedures.
+- Configure your OIDC provider and invitations for your organization; protect operator access and recovery procedures.
 - Treat agent keys, session cookies, backups and monitoring credentials as secrets. Revoke keys when their purpose ends.
 - Keep encrypted off-host backup copies and perform restore drills. Local scheduled backups alone do not protect against loss of the host or disk.
 - Review deployment and dependency updates regularly. Pin production images to a published digest.

@@ -5,15 +5,18 @@ x-app: &app
     APP_ORIGIN: ${APP_ORIGIN:?Set the public HTTPS origin}
     AUTH_MODE: ${AUTH_MODE:-optional}
     TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
-    ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:-}
-    ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:-}
-    ENTRA_CLIENT_SECRET_FILE: /run/secrets/entra_client_secret
+    OIDC_ISSUER: ${OIDC_ISSUER:-}
+    OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+    OIDC_CLIENT_SECRET_FILE: /run/secrets/oidc_client_secret
+    OIDC_SCOPES: ${OIDC_SCOPES:-}
+    OIDC_PROMPT: ${OIDC_PROMPT:-}
+    OIDC_LOGOUT_REDIRECT: ${OIDC_LOGOUT_REDIRECT:-}
     METRICS_TOKEN_FILE: /run/secrets/metrics_token
   volumes:
     - data:/data
     - backups:/backups
   secrets:
-    - entra_client_secret
+    - oidc_client_secret
     - metrics_token
   security_opt:
     - no-new-privileges:true
@@ -43,7 +46,7 @@ volumes:
   data:
   backups:
 secrets:
-  entra_client_secret:
-    file: ${ENTRA_SECRET_FILE:-./secrets/entra_client_secret}
+  oidc_client_secret:
+    file: ${OIDC_SECRET_FILE:-./secrets/oidc_client_secret}
   metrics_token:
     file: ${METRICS_SECRET_FILE:-./secrets/metrics_token}

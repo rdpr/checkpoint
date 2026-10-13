@@ -7,8 +7,11 @@ imagePullSecrets: [] # Existing registry credentials, e.g. [{name: ghcr}].
 origin: '' # Required: externally accessible HTTPS origin.
 authMode: optional
 trustedProxies: [] # Explicit ingress proxy source IPs/CIDRs as seen by the app.
-entra:
-  tenantId: ''
+oidc:
+  issuer: ''
+  scopes: 'openid profile email'
+  prompt: '' # Omitted from authorization requests when empty.
+  logoutRedirect: false
   clientId: ''
   secretName: '' # Existing Secret with client-secret key.
 metrics:
