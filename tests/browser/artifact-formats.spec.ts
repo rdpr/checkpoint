@@ -296,7 +296,7 @@ test('HTML markup offers native selection actions and persists Looks good feedba
   const artifact = await post(page.request, '/artifacts', {
     workspaceId: workspace.id,
     path: 'decision.html',
-    body: '<!doctype html><html><body><p id="decision" style="font:20px sans-serif;padding:24px">Keep a stable delivery ID across retries.</p></body></html>',
+    body: '<!doctype html><html><body><p id="decision" style="font:20px sans-serif;padding:24px">Keep a stable delivery ID across retries.</p><p id="contract" style="font:20px sans-serif;padding:24px">Receivers deduplicate each delivery before applying its effect.</p></body></html>',
   });
   await page.goto(`/?workspace=${workspace.id}&artifact=${artifact.id}`);
   await appearance(page, 'Dark');
@@ -332,7 +332,8 @@ test('HTML markup offers native selection actions and persists Looks good feedba
   await tools
     .getByRole('button', { name: 'Comment', exact: true })
     .click();
-  await frame.locator('#decision').click({ clickCount: 3 });
+  // Select an unannotated passage; the first now has a clickable saved marker.
+  await frame.locator('#contract').click({ clickCount: 3 });
   await page
     .getByPlaceholder('Add a comment...', { exact: true })
     .fill('Document receiver deduplication.');

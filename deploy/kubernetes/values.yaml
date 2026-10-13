@@ -6,6 +6,7 @@ image:
 imagePullSecrets: [] # Existing registry credentials, e.g. [{name: ghcr}].
 origin: '' # Required: externally accessible HTTPS origin.
 authMode: optional
+trustedProxies: [] # Explicit ingress proxy source IPs/CIDRs as seen by the app.
 entra:
   tenantId: ''
   clientId: ''

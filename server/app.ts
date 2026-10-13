@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { Store, type Actor } from './store.ts';
 import { AppError, requireThat, secret, digest } from './security.ts';
 import { handleMcp } from './mcp.ts';
+import { authenticationLimiter, trustedProxyAddresses } from './authLimits.ts';
 
 export interface AppOptions {
   origins: string[];
@@ -27,6 +28,7 @@ export interface AppOptions {
   allowSetup?: boolean;
   release?: string;
   maintenanceFile?: string;
+  trustedProxies?: string[];
 }
 const sessionCookie = (req: Request) =>
   req.headers.cookie
@@ -38,6 +40,7 @@ const sessionCookie = (req: Request) =>
 export function createApp(store: Store, options: AppOptions) {
   const app = express();
   app.disable('x-powered-by');
+  app.set('trust proxy', trustedProxyAddresses(options.trustedProxies ?? []));
   const metrics = options.metricsToken
     ? monitoring(store, options.dataDir, options.operationsFile)
     : undefined;
@@ -109,24 +112,16 @@ export function createApp(store: Store, options: AppOptions) {
   });
   app.use(express.json({ limit: '2mb' }));
   app.use(legacyRoutes);
-  // Bounded per-address authentication attempts. Do not trust forwarded IP headers.
-  const attempts = new Map<string, { count: number; until: number }>();
-  app.use('/api/auth', (req, res, next) => {
-    if (req.method !== 'POST') return next();
-    const time = Date.now();
-    for (const [key, value] of attempts)
-      if (value.until < time) attempts.delete(key);
-    const key = req.socket.remoteAddress ?? 'unknown',
-      entry = attempts.get(key) ?? { count: 0, until: time + 60_000 };
-    if (entry.count >= 20 || attempts.size >= 10_000)
-      return res.status(429).set('Retry-After', '60').json({
-        code: 'rate_limited',
-        message: 'Too many attempts. Try again in a minute.',
-      });
-    entry.count++;
-    attempts.set(key, entry);
-    next();
-  });
+  // Mount on the same routes as the handlers, including Express's case/slash rules.
+  app.post(
+    [
+      '/api/auth/setup',
+      '/api/auth/login',
+      '/api/auth/register',
+      '/api/auth/entra/start',
+    ],
+    authenticationLimiter(),
+  );
   const signIn = (
     res: Response,
     user: Parameters<Store['session']>[0],
@@ -644,9 +639,9 @@ export function createApp(store: Store, options: AppOptions) {
   app.get('/api/artifacts/:did/comments', (req, res) =>
     res.json(store.comments(actor(res), req.params.did)),
   );
-  app.post('/api/artifacts/:did/comments', (req, res) =>
+  app.post('/api/artifacts/:did/comments', async (req, res) =>
     res.status(201).json(
-      store.addComment(actor(res), {
+      await store.addComment(actor(res), {
         ...req.body,
         artifactId: req.params.did,
       }),

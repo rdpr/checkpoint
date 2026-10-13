@@ -59,6 +59,10 @@ const app = createApp(store, {
   allowSetup: local && process.env.NODE_ENV !== 'production',
   release: process.env.APP_RELEASE,
   maintenanceFile: process.env.MAINTENANCE_FILE,
+  trustedProxies: (process.env.TRUSTED_PROXIES ?? '')
+    .split(',')
+    .map((ip) => ip.trim())
+    .filter(Boolean),
 });
 const server = app.listen(port, host, () =>
   console.log(
