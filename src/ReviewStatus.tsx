@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import type {
-  Document,
+  Artifact,
   Revision,
   User,
   ReviewDecision,
   ReviewRequest,
 } from '../shared/types';
 import { currentDecisions, reviewStatus } from '../shared/review';
-import { dateLabel } from './api';
+import { dateLabel, artifactLabel, relativeDate } from './api';
 import { useReviewDraft } from './useReviewDraft';
-import { ErrorMessage } from './ui';
+import { ErrorMessage, Modal } from './ui';
 
 export function ReviewStatus({
   doc,
@@ -21,7 +21,7 @@ export function ReviewStatus({
   busy,
   onReview,
 }: {
-  doc: Document;
+  doc: Artifact;
   revision: Revision;
   user: User;
   canReview: boolean;
@@ -39,7 +39,8 @@ export function ReviewStatus({
     revisionNumber: number;
     note: string;
   } | null>(`pw-review-draft:${user.id}:${doc.id}`, null);
-  const [deferred, setDeferred] = useState(false);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const [deferred, setDeferred] = useState(true);
   const awaitingOwnResponse =
     request?.status === 'waiting' &&
     request.reviewerId === user.id &&
@@ -55,28 +56,27 @@ export function ReviewStatus({
     (draft.revisionId !== doc.currentRevisionId ||
       draft.revisionId !== revision.id);
   async function submit(decision: ReviewDecision['decision']) {
-    if (draft && (await onReview(draft.revisionId, decision, draft.note)))
+    setSubmissionError(null);
+    if (!draft) return;
+    if (await onReview(draft.revisionId, decision, draft.note)) {
       setDraft((current) =>
         current?.revisionId === draft.revisionId && current.note === draft.note
           ? null
           : current,
       );
+      setDeferred(true);
+    } else
+      setSubmissionError(
+        'Your review was not submitted. Your note is kept. Check your connection and the current revision before trying again.',
+      );
   }
   return (
-    <section className="review-status" aria-label="Document review">
+    <section className="review-status" aria-label="Artifact review">
       <div className="review-status-heading">
-        <strong className={status === 'Approved' ? 'review-approved' : ''}>
-          {status}
-        </strong>
-        <span>
-          Revision {revision.number} ·{' '}
-          {active.filter((r) => r.decision === 'approved').length} approvals ·{' '}
-          {active.filter((r) => r.decision === 'changes_requested').length}{' '}
-          requests for changes
-        </span>
+        <h1>{artifactLabel(doc.path)}</h1>
         {((canReview && !draft) || (draft && deferred)) && (
           <button
-            className="button small-button"
+            className="button primary small-button"
             onClick={() => {
               if (!draft)
                 setDraft({
@@ -93,9 +93,28 @@ export function ReviewStatus({
                 ? 'Respond to this round'
                 : own
                   ? 'Update your review'
-                  : 'Review this revision'}
+                  : 'Finish review'}
           </button>
         )}
+      </div>
+      <div className="review-metadata">
+        <strong
+          className={`review-state ${status === 'Approved' ? 'review-approved' : status === 'Changes requested' ? 'review-changes' : ''}`}
+        >
+          {status}
+        </strong>
+        <span>Revision {revision.number}</span>
+        <span>
+          {request
+            ? `Requested by ${request.agentName ?? request.requesterName}`
+            : (revision.agentName ?? revision.authorName)}
+        </span>
+        <time
+          dateTime={revision.createdAt}
+          title={dateLabel(revision.createdAt)}
+        >
+          {relativeDate(revision.createdAt)}
+        </time>
       </div>
       <ErrorMessage message={storageError} />
       {request && request.revisionId === revision.id && (
@@ -113,105 +132,133 @@ export function ReviewStatus({
         </p>
       )}
       {draft && !deferred && (
-        <form
-          className="review-decision-form"
-          onSubmit={(e) => e.preventDefault()}
+        <Modal
+          title={`Finish review · revision ${draft.revisionNumber}`}
+          onClose={() => setDeferred(true)}
         >
-          <small>
-            Draft for revision {draft.revisionNumber} · kept in this browser
-          </small>
-          <label htmlFor="review-note">Review note (optional)</label>
-          <textarea
-            id="review-note"
-            disabled={busy}
-            rows={2}
-            maxLength={10000}
-            value={draft.note}
-            onChange={(e) => setDraft({ ...draft, note: e.target.value })}
-          />
-          {stale && (
-            <p role="alert">
-              Your note belongs to revision {draft.revisionNumber}. It is kept
-              here and will not be submitted for another revision automatically.
-              {revision.id !== doc.currentRevisionId ? (
+          <p className="muted">
+            Posted comments are already shared. This decision applies only to
+            revision {draft.revisionNumber}.
+          </p>
+          <form
+            className="review-decision-form"
+            onSubmit={(e) => e.preventDefault()}
+          >
+            <small>
+              Draft for revision {draft.revisionNumber} · kept in this browser
+            </small>
+            <ErrorMessage message={submissionError ?? storageError} />
+            <label htmlFor="review-note">Review note (optional)</label>
+            <textarea
+              id="review-note"
+              disabled={busy}
+              rows={2}
+              maxLength={10000}
+              value={draft.note}
+              onChange={(e) => setDraft({ ...draft, note: e.target.value })}
+            />
+            {stale && (
+              <p role="alert">
+                Your note belongs to revision {draft.revisionNumber}. It is kept
+                here and will not be submitted for another revision
+                automatically.
+                {revision.id !== doc.currentRevisionId ? (
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={onReadLatest}
+                  >
+                    Read latest revision
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="text-button"
+                    disabled={!canReview || busy}
+                    onClick={() =>
+                      setDraft({
+                        ...draft,
+                        revisionId: revision.id,
+                        revisionNumber: revision.number,
+                      })
+                    }
+                  >
+                    Use note for revision {revision.number}
+                  </button>
+                )}
+              </p>
+            )}
+            {!canReview && (
+              <p>
+                {doc.archivedAt
+                  ? 'Unarchive this artifact before submitting a review. Your note is kept.'
+                  : 'Review the latest saved revision and save or discard any artifact draft before submitting.'}
+              </p>
+            )}
+            <div className="button-row">
+              <button
+                type="button"
+                className="text-button"
+                disabled={busy}
+                onClick={() => setDeferred(true)}
+              >
+                Keep draft for later
+              </button>
+              <button
+                className="button primary small-button"
+                disabled={busy || !!stale || !canReview}
+                onClick={() => void submit('approved')}
+              >
+                Approve
+              </button>
+              <button
+                className="button small-button"
+                disabled={busy || !!stale || !canReview}
+                onClick={() => void submit('changes_requested')}
+              >
+                Request changes
+              </button>
+              {own && (
                 <button
-                  type="button"
                   className="text-button"
-                  onClick={onReadLatest}
+                  disabled={busy || !!stale || !canReview}
+                  onClick={() => void submit('withdrawn')}
                 >
-                  Read latest revision
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="text-button"
-                  disabled={!canReview || busy}
-                  onClick={() =>
-                    setDraft({
-                      ...draft,
-                      revisionId: revision.id,
-                      revisionNumber: revision.number,
-                    })
-                  }
-                >
-                  Use note for revision {revision.number}
+                  Withdraw review
                 </button>
               )}
-            </p>
-          )}
-          {!canReview && (
-            <p>
-              {doc.archivedAt
-                ? 'Unarchive this document before submitting a review. Your note is kept.'
-                : 'Review the latest saved revision and save or discard any document draft before submitting.'}
-            </p>
-          )}
-          <div className="button-row">
-            <button
-              type="button"
-              className="text-button"
-              disabled={busy}
-              onClick={() => setDeferred(true)}
-            >
-              Keep draft for later
-            </button>
-            <button
-              className="button primary small-button"
-              disabled={busy || !!stale || !canReview}
-              onClick={() => void submit('approved')}
-            >
-              Approve
-            </button>
-            <button
-              className="button small-button"
-              disabled={busy || !!stale || !canReview}
-              onClick={() => void submit('changes_requested')}
-            >
-              Request changes
-            </button>
-            {own && (
               <button
                 className="text-button"
-                disabled={busy || !!stale || !canReview}
-                onClick={() => void submit('withdrawn')}
+                disabled={busy}
+                onClick={() => setDraft(null)}
               >
-                Withdraw review
+                Discard review draft
               </button>
-            )}
-            <button
-              className="text-button"
-              disabled={busy}
-              onClick={() => setDraft(null)}
-            >
-              Discard review draft
-            </button>
-          </div>
-          <small>
-            Decisions apply only to the saved revision. Open discussions do not
-            block approval.
-          </small>
-        </form>
+            </div>
+            <small>
+              Decisions apply only to the saved revision. Open discussions do
+              not block approval.
+            </small>
+          </form>
+        </Modal>
       )}
+    </section>
+  );
+}
+
+export function ReviewActivity({
+  doc,
+  revision,
+}: {
+  doc: Artifact;
+  revision: Revision;
+}) {
+  const reviews = doc.reviews.filter(
+    (r) => r.revisionNumber <= revision.number,
+  );
+  return (
+    <div className="review-activity">
+      {' '}
       {!!reviews.length && (
         <details className="review-history">
           <summary>Review activity ({reviews.length})</summary>
@@ -238,6 +285,6 @@ export function ReviewStatus({
           ))}
         </details>
       )}
-    </section>
+    </div>
   );
 }

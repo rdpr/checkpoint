@@ -1,14 +1,19 @@
+import { legacyFields } from './compatibility.ts';
+import { migrateLegacy } from './legacyMigration.ts';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { artifactFormat } from '../shared/artifacts.ts';
+import { buildPersistedHtmlAnchor } from '@plannotator/core/html-anchor';
 import { z } from 'zod';
 import type {
+  Folder,
   User,
   Workspace,
   Member,
-  Document,
-  DocumentSummary,
+  Artifact,
+  ArtifactSummary,
   Revision,
   Comment,
   Reply,
@@ -36,13 +41,14 @@ import {
   verifyPassword,
 } from './security.ts';
 import * as schema from './schemas.ts';
-import { computePlanDiff } from '@plannotator/ui/utils/planDiffEngine';
-import { documentLinks, relativePath } from './links.ts';
+import { commentDiffBlock, type CommentDiffBlock } from './diff.ts';
+import { artifactLinks, relativePath } from './links.ts';
 import { currentDecisions } from '../shared/review.ts';
 import { formatFeedback } from './feedback.ts';
 
 export interface Actor {
   user: User;
+  session?: { hash: string; requireSso: boolean };
   token?: {
     id: string;
     workspaceId: string;
@@ -54,9 +60,10 @@ type Account = User & { password: string; disabled_at: string | null };
 const now = () => new Date().toISOString();
 const expiry = (hours: number) =>
   new Date(Date.now() + hours * 3600000).toISOString();
-const welcome = `# A shared place to think\n\nGood plans get better when people and agents work from the same document.\n\n## Make this workspace yours\n\n- Create a document using **New document**. Paths like \`specs/api.md\` keep related work together.\n- Switch to **Edit**, make a change, then **Save revision**.\n- Select a passage in Read mode to leave a comment, or start a document-wide discussion in the sidebar.\n- Invite a teammate from **Members**.\n- Create a scoped key in **Agent access** to connect an MCP client.\n\n## Every change has a history\n\nSaved revisions are permanent. Open **History** to compare a revision with the latest document or restore an earlier version as a new revision.\n\n> Edits are saved explicitly. If somebody saves first, your draft stays available and the app asks you to reconcile the changes.\n\n## A place for decisions\n\nUse this document for your first plan, or add a new one. Keep the purpose, constraints, and next steps together.\n`;
+const welcome =
+  '# Review your first design\n\nUse this workspace to review specs and engineering decisions with your team and coding agents.\n\n## Start with a concrete proposal\n\nCreate an artifact such as `specs/webhook-delivery.md`. Include the problem, proposed architecture, alternatives, and questions for reviewers. Choose Markdown for a written spec, HTML for an interactive design preview, or a standalone Mermaid or Graphviz diagram.\n\n## Get feedback before the next step\n\n- Invite an engineer from **Members**, then use **Request review** on a saved revision.\n- Select a passage or pinpoint a diagram element to comment. Use **New discussion** for a broader design question.\n- Use **Finish review** to approve or request changes. The decision belongs to that exact revision.\n\n## Work with an agent\n\nOpen **Agent access** to create a scoped MCP key. Ask the agent to publish a spec, request your review, and read the feedback before revising or moving to implementation. Only people can make review decisions; Checkpoint records them without enforcing an execution gate.\n\n## Check what changed\n\nCompare revisions in **Activity** to see how feedback was addressed. Saved revisions and discussion remain available. Save edits explicitly; if someone saves first, your draft is preserved for reconciliation.\n';
 
-export const DATABASE_VERSION = 11;
+export const DATABASE_VERSION = 12;
 
 export class Store {
   readonly db: DatabaseSync;
@@ -74,153 +81,343 @@ export class Store {
       );
     }
     if (filename !== ':memory:') chmodSync(filename, 0o600);
-    this.db
-      .exec(`PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
-      CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, password TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS sessions(hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS workspaces(id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS members(workspace_id TEXT NOT NULL REFERENCES workspaces(id), user_id TEXT NOT NULL REFERENCES users(id), role TEXT NOT NULL CHECK(role IN ('owner','editor','viewer')), PRIMARY KEY(workspace_id,user_id));
-      CREATE TABLE IF NOT EXISTS documents(id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), path TEXT NOT NULL, current_revision_id TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(workspace_id,path));
-      CREATE TABLE IF NOT EXISTS revisions(id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES documents(id), number INTEGER NOT NULL, body TEXT NOT NULL, author_name TEXT NOT NULL, author_id TEXT NOT NULL REFERENCES users(id), agent_name TEXT, created_at TEXT NOT NULL, restored_from TEXT, UNIQUE(document_id,number));
-      CREATE TABLE IF NOT EXISTS comments(id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES documents(id), revision_id TEXT NOT NULL REFERENCES revisions(id), body TEXT NOT NULL, quote TEXT NOT NULL, anchor TEXT, resolved INTEGER NOT NULL DEFAULT 0, author_name TEXT NOT NULL, author_id TEXT NOT NULL REFERENCES users(id), agent_name TEXT, created_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS replies(id TEXT PRIMARY KEY, comment_id TEXT NOT NULL REFERENCES comments(id), body TEXT NOT NULL, author_name TEXT NOT NULL, author_id TEXT NOT NULL REFERENCES users(id), agent_name TEXT, created_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS images(id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES documents(id), mime TEXT NOT NULL, data BLOB NOT NULL, author_id TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS reviews(id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES documents(id), revision_id TEXT NOT NULL REFERENCES revisions(id), reviewer_id TEXT NOT NULL REFERENCES users(id), reviewer_name TEXT NOT NULL, decision TEXT NOT NULL CHECK(decision IN ('approved','changes_requested','withdrawn')), note TEXT NOT NULL, created_at TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS reviews_document ON reviews(document_id);
-      CREATE TABLE IF NOT EXISTS invites(id TEXT PRIMARY KEY, hash TEXT NOT NULL UNIQUE, workspace_id TEXT NOT NULL REFERENCES workspaces(id), role TEXT NOT NULL, expires_at TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS tokens(id TEXT PRIMARY KEY, hash TEXT NOT NULL UNIQUE, user_id TEXT NOT NULL REFERENCES users(id), workspace_id TEXT NOT NULL REFERENCES workspaces(id), name TEXT NOT NULL, scope TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS documents_workspace ON documents(workspace_id);
-      CREATE INDEX IF NOT EXISTS comments_document ON comments(document_id);
-      CREATE INDEX IF NOT EXISTS replies_comment ON replies(comment_id);`);
+    this.db.exec(
+      'PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000',
+    );
+    migrateLegacy(this);
+    this.migrateArtifacts();
+  }
+  private migrateArtifacts() {
     this.transaction(() => {
-      const version = this.one<{ user_version: number }>(
-        'PRAGMA user_version',
-      )!.user_version;
-      if (version < 2) {
-        this.db.exec(`
-          ALTER TABLE comments ADD COLUMN kind TEXT NOT NULL DEFAULT 'comment' CHECK(kind IN ('comment','deletion','label'));
-          ALTER TABLE comments ADD COLUMN label_tip TEXT;
-          PRAGMA user_version=2;
-        `);
-      }
-      if (version < 3) {
+      if (
+        this.one<{ user_version: number }>('PRAGMA user_version')!
+          .user_version >= 12
+      )
+        return;
+      this.db.exec(`
+        DROP TRIGGER document_search_update;
+        DROP TRIGGER document_search_delete;
+        DROP TABLE document_search;
+        ALTER TABLE documents RENAME TO artifacts;
+        ALTER TABLE document_paths RENAME TO artifact_paths;
+      `);
+      for (const table of [
+        'artifact_paths',
+        'revisions',
+        'comments',
+        'images',
+        'reviews',
+        'review_requests',
+        'notifications',
+        'comment_submissions',
+      ])
         this.db.exec(
-          "ALTER TABLE comments ADD COLUMN images TEXT NOT NULL DEFAULT '[]'; PRAGMA user_version=3;",
+          `ALTER TABLE ${table} RENAME COLUMN document_id TO artifact_id`,
         );
+      this.db.exec(`
+        CREATE VIRTUAL TABLE artifact_search USING fts5(artifact_id UNINDEXED,path,body,tokenize='unicode61');
+        INSERT INTO artifact_search SELECT a.id,a.path,r.body FROM artifacts a JOIN revisions r ON r.id=a.current_revision_id;
+        CREATE TRIGGER artifact_search_update AFTER UPDATE OF current_revision_id,path ON artifacts BEGIN
+          DELETE FROM artifact_search WHERE artifact_id=old.id;
+          INSERT INTO artifact_search SELECT new.id,new.path,body FROM revisions WHERE id=new.current_revision_id;
+        END;
+        CREATE TRIGGER artifact_search_delete AFTER DELETE ON artifacts BEGIN DELETE FROM artifact_search WHERE artifact_id=old.id; END;
+        CREATE TABLE folders(id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL REFERENCES workspaces(id),parent_id TEXT REFERENCES folders(id),name TEXT NOT NULL);
+        CREATE UNIQUE INDEX folder_sibling ON folders(workspace_id,ifnull(parent_id,''),name);
+        ALTER TABLE artifacts ADD COLUMN folder_id TEXT REFERENCES folders(id);
+        ALTER TABLE workspaces ADD COLUMN catalog_version INTEGER NOT NULL DEFAULT 0;
+      `);
+      for (const a of this.all<{
+        id: string;
+        workspaceId: string;
+        path: string;
+      }>(
+        'SELECT id,workspace_id workspaceId,path FROM artifacts ORDER BY path',
+      )) {
+        const folderId = this.ensureFolderPath(a.workspaceId, a.path, true);
+        this.run('UPDATE artifacts SET folder_id=? WHERE id=?', folderId, a.id);
       }
-      if (version < 4) {
-        this.db
-          .exec(`ALTER TABLE comments ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
-          ALTER TABLE comments ADD COLUMN updated_at TEXT;
-          ALTER TABLE comments ADD COLUMN author_token_id TEXT;
-          PRAGMA user_version=4;`);
-      }
-      if (version < 5) {
-        this.db.exec(`ALTER TABLE comments ADD COLUMN diff TEXT;
-          CREATE TABLE IF NOT EXISTS comment_reattachments (
-            id TEXT PRIMARY KEY, comment_id TEXT NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
-            revision_id TEXT NOT NULL REFERENCES revisions(id), quote TEXT NOT NULL, anchor TEXT NOT NULL,
-            author_id TEXT NOT NULL REFERENCES users(id), author_name TEXT NOT NULL, agent_name TEXT, created_at TEXT NOT NULL
-          );
-          CREATE INDEX IF NOT EXISTS reattachments_comment ON comment_reattachments(comment_id);
-          PRAGMA user_version=5;`);
-      }
-      if (version < 6) {
-        this.db.exec(`CREATE TABLE IF NOT EXISTS review_requests (
-          id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES documents(id),
-          revision_id TEXT NOT NULL REFERENCES revisions(id), base_revision_id TEXT REFERENCES revisions(id),
-          reviewer_id TEXT NOT NULL REFERENCES users(id), reviewer_name TEXT NOT NULL,
-          requester_id TEXT NOT NULL REFERENCES users(id), requester_name TEXT NOT NULL,
-          requester_token_id TEXT, agent_name TEXT, message TEXT NOT NULL, created_at TEXT NOT NULL,
-          after_review_rowid INTEGER NOT NULL, closed_review_rowid INTEGER, supersedes_id TEXT UNIQUE REFERENCES review_requests(id),
-          cancelled_at TEXT, cancelled_by TEXT, version INTEGER NOT NULL DEFAULT 1
-        );
-        CREATE INDEX IF NOT EXISTS requests_document ON review_requests(document_id);
-        PRAGMA user_version=6;`);
-      }
-      if (version < 7) {
-        this.db.exec(`CREATE TABLE comment_submissions (
-          submission_id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES documents(id),
-          author_id TEXT NOT NULL REFERENCES users(id), author_token_id TEXT,
-          fingerprint TEXT NOT NULL, comment_id TEXT NOT NULL
-        );
-        PRAGMA user_version=7;`);
-      }
-      if (version < 8) {
-        this.db.exec(`
-          ALTER TABLE users ADD COLUMN org_role TEXT NOT NULL DEFAULT 'member' CHECK(org_role IN ('admin','member'));
-          ALTER TABLE users ADD COLUMN disabled_at TEXT;
-          ALTER TABLE invites ADD COLUMN created_by TEXT REFERENCES users(id);
-          CREATE TABLE organization(id INTEGER PRIMARY KEY CHECK(id=1), name TEXT NOT NULL, version INTEGER NOT NULL);
-          INSERT INTO organization VALUES(1,'My organization',1);
-          UPDATE users SET org_role='admin' WHERE rowid=(SELECT MIN(rowid) FROM users);
-          CREATE TABLE teams(id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE);
-          CREATE TABLE team_members(team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id), PRIMARY KEY(team_id,user_id));
-          CREATE TABLE team_workspaces(team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE, workspace_id TEXT NOT NULL REFERENCES workspaces(id), role TEXT NOT NULL CHECK(role IN ('editor','viewer')), PRIMARY KEY(team_id,workspace_id));
-          CREATE VIEW effective_members AS
-            SELECT a.workspace_id,a.user_id,CASE MAX(a.level) WHEN 3 THEN 'owner' WHEN 2 THEN 'editor' ELSE 'viewer' END role
-            FROM (SELECT workspace_id,user_id,CASE role WHEN 'owner' THEN 3 WHEN 'editor' THEN 2 ELSE 1 END level FROM members
-              UNION ALL SELECT tw.workspace_id,tm.user_id,CASE tw.role WHEN 'editor' THEN 2 ELSE 1 END FROM team_workspaces tw JOIN team_members tm ON tm.team_id=tw.team_id) a
-            JOIN users u ON u.id=a.user_id WHERE u.disabled_at IS NULL GROUP BY a.workspace_id,a.user_id;
-          CREATE TABLE audit_log(id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id TEXT REFERENCES users(id), actor_name TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, details TEXT NOT NULL, created_at TEXT NOT NULL);
-          INSERT INTO audit_log(actor_name,action,target,details,created_at) VALUES('System','organization.initialized','My organization','{}',strftime('%Y-%m-%dT%H:%M:%fZ','now'));
-          PRAGMA user_version=8;
-        `);
-      }
-      if (version < 9) {
-        this.db.exec(`
-          ALTER TABLE users ADD COLUMN recovery_until TEXT;
-          ALTER TABLE sessions ADD COLUMN auth_method TEXT NOT NULL DEFAULT 'password';
-          CREATE TABLE identities(tenant_id TEXT NOT NULL, object_id TEXT NOT NULL, user_id TEXT NOT NULL UNIQUE REFERENCES users(id), PRIMARY KEY(tenant_id,object_id));
-          CREATE TABLE identity_flows(hash TEXT PRIMARY KEY, browser_hash TEXT NOT NULL, verifier TEXT NOT NULL, nonce TEXT NOT NULL, user_id TEXT REFERENCES users(id), session_hash TEXT, invitation TEXT, expires_at TEXT NOT NULL);
-          PRAGMA user_version=9;
-        `);
-      }
-      if (version < 10) {
-        this.db.exec(`
-          ALTER TABLE documents ADD COLUMN archived_at TEXT;
-          ALTER TABLE documents ADD COLUMN metadata_version INTEGER NOT NULL DEFAULT 1;
-          ALTER TABLE tokens ADD COLUMN last_used_at TEXT;
-          CREATE TABLE service_accounts(user_id TEXT PRIMARY KEY REFERENCES users(id), workspace_id TEXT NOT NULL REFERENCES workspaces(id), created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL);
-          CREATE TABLE notifications(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL REFERENCES users(id), document_id TEXT NOT NULL REFERENCES documents(id), kind TEXT NOT NULL CHECK(kind IN ('review_requested','reply')), event_key TEXT NOT NULL, request_id TEXT REFERENCES review_requests(id) ON DELETE CASCADE, comment_id TEXT REFERENCES comments(id) ON DELETE CASCADE, reply_id TEXT REFERENCES replies(id) ON DELETE CASCADE, actor_name TEXT NOT NULL, preview TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT, UNIQUE(user_id,event_key));
-          CREATE INDEX notifications_recipient ON notifications(user_id,id DESC);
-          CREATE VIRTUAL TABLE document_search USING fts5(document_id UNINDEXED,path,body,tokenize='unicode61');
-          INSERT INTO document_search SELECT d.id,d.path,r.body FROM documents d JOIN revisions r ON r.id=d.current_revision_id;
-          CREATE TRIGGER document_search_update AFTER UPDATE OF current_revision_id,path ON documents BEGIN
-            DELETE FROM document_search WHERE document_id=old.id;
-            INSERT INTO document_search SELECT new.id,new.path,body FROM revisions WHERE id=new.current_revision_id;
-          END;
-          CREATE TRIGGER document_search_delete AFTER DELETE ON documents BEGIN DELETE FROM document_search WHERE document_id=old.id; END;
-          PRAGMA user_version=10;
-        `);
-      }
-      if (version < 11) {
-        this.db.exec(`
-          ALTER TABLE notifications RENAME TO notifications_old;
-          DROP INDEX notifications_recipient;
-          CREATE TABLE notifications(id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL REFERENCES users(id), document_id TEXT NOT NULL REFERENCES documents(id), kind TEXT NOT NULL CHECK(kind IN ('review_requested','reply','approved','changes_requested','withdrawn')), event_key TEXT NOT NULL, request_id TEXT REFERENCES review_requests(id) ON DELETE CASCADE, comment_id TEXT REFERENCES comments(id) ON DELETE CASCADE, reply_id TEXT REFERENCES replies(id) ON DELETE CASCADE, actor_name TEXT NOT NULL, preview TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT, UNIQUE(user_id,event_key));
-          INSERT INTO notifications SELECT * FROM notifications_old;
-          DROP TABLE notifications_old;
-          CREATE INDEX notifications_recipient ON notifications(user_id,id DESC);
-          CREATE TABLE document_paths(workspace_id TEXT NOT NULL REFERENCES workspaces(id), path TEXT NOT NULL, document_id TEXT NOT NULL REFERENCES documents(id), PRIMARY KEY(workspace_id,path));
-          INSERT INTO document_paths SELECT workspace_id,path,id FROM documents;
-          CREATE TABLE revision_links(revision_id TEXT NOT NULL REFERENCES revisions(id), href TEXT NOT NULL, target_path TEXT NOT NULL, PRIMARY KEY(revision_id,href));
-        `);
-        for (const row of this.all<{ id: string; body: string; path: string }>(
-          'SELECT r.id,r.body,d.path FROM revisions r JOIN documents d ON d.id=r.document_id',
-        )) {
-          for (const href of documentLinks(row.body))
-            this.run(
-              'INSERT INTO revision_links VALUES(?,?,?)',
-              row.id,
-              href,
-              relativePath(href, row.path)!,
-            );
-        }
-        this.db.exec('PRAGMA user_version=11');
-      }
+      this.db.exec(`
+        CREATE TRIGGER artifact_catalog_insert AFTER INSERT ON artifacts BEGIN UPDATE workspaces SET catalog_version=catalog_version+1 WHERE id=new.workspace_id; END;
+        CREATE TRIGGER artifact_catalog_update AFTER UPDATE OF path,archived_at ON artifacts BEGIN UPDATE workspaces SET catalog_version=catalog_version+1 WHERE id=new.workspace_id; END;
+        CREATE TRIGGER folder_catalog_insert AFTER INSERT ON folders BEGIN UPDATE workspaces SET catalog_version=catalog_version+1 WHERE id=new.workspace_id; END;
+        CREATE TRIGGER folder_catalog_update AFTER UPDATE ON folders BEGIN UPDATE workspaces SET catalog_version=catalog_version+1 WHERE id=new.workspace_id; END;
+        CREATE TRIGGER folder_catalog_delete AFTER DELETE ON folders BEGIN UPDATE workspaces SET catalog_version=catalog_version+1 WHERE id=old.workspace_id; END;
+        PRAGMA user_version=12;
+      `);
     });
   }
+  // Paths remain an interchange format for artifacts and agents. Folders have
+  // independent IDs so empty folders and navigation survive a rename or move.
+  private ensureFolderPath(
+    workspaceId: string,
+    path: string,
+    migrating = false,
+  ): string | null {
+    let parentId: string | null = null;
+    for (const name of path.split('/').slice(0, -1)) {
+      let folder: { id: string } | undefined = this.one<{ id: string }>(
+        'SELECT id FROM folders WHERE workspace_id=? AND parent_id IS ? AND name=?',
+        workspaceId,
+        parentId,
+        name,
+      );
+      if (!folder) {
+        requireThat(
+          migrating ||
+            !this.one(
+              'SELECT id FROM artifacts WHERE workspace_id=? AND path=?',
+              workspaceId,
+              this.folderPath(workspaceId, parentId).concat(name).join('/'),
+            ),
+          409,
+          'path_exists',
+          'An artifact already uses that folder name.',
+        );
+        folder = { id: randomUUID() };
+        this.run(
+          'INSERT INTO folders VALUES(?,?,?,?)',
+          folder.id,
+          workspaceId,
+          parentId,
+          name,
+        );
+      }
+      parentId = folder.id;
+    }
+    return parentId;
+  }
+  private folderPath(workspaceId: string, id: string | null): string[] {
+    if (!id) return [];
+    const f = this.one<Folder>(
+      'SELECT id,workspace_id workspaceId,parent_id parentId,name FROM folders WHERE id=? AND workspace_id=?',
+      id,
+      workspaceId,
+    );
+    requireThat(f, 404, 'not_found', 'Folder not found in this workspace.');
+    return [...this.folderPath(workspaceId, f.parentId), f.name];
+  }
+  catalog(actor: Actor, workspaceId: string) {
+    this.access(actor, workspaceId);
+    const folders = this.all<Folder>(
+      'SELECT id,workspace_id workspaceId,parent_id parentId,name FROM folders WHERE workspace_id=? ORDER BY name',
+      workspaceId,
+    );
+    return {
+      version: this.one<{ version: number }>(
+        'SELECT catalog_version version FROM workspaces WHERE id=?',
+        workspaceId,
+      )!.version,
+      folders,
+      artifacts: this.artifacts(actor, workspaceId, true),
+    };
+  }
+  createFolder(actor: Actor, input: unknown) {
+    const data = schema.createFolder.parse(input);
+    return this.transaction(() => {
+      this.access(actor, data.workspaceId, true);
+      this.checkFolderDestination(data.workspaceId, data.parentId, data.name);
+      const id = randomUUID();
+      this.run(
+        'INSERT INTO folders VALUES(?,?,?,?)',
+        id,
+        data.workspaceId,
+        data.parentId,
+        data.name,
+      );
+      this.audit(actor, 'folder.created', data.name, {
+        workspaceId: data.workspaceId,
+        folderId: id,
+      });
+      return {
+        id,
+        workspaceId: data.workspaceId,
+        parentId: data.parentId,
+        name: data.name,
+      };
+    });
+  }
+  private checkFolderDestination(
+    workspaceId: string,
+    parentId: string | null,
+    name: string,
+    exceptId?: string,
+  ) {
+    const path = [...this.folderPath(workspaceId, parentId), name].join('/');
+    requireThat(
+      path.length <= 220,
+      400,
+      'invalid_path',
+      'Choose a shorter folder path.',
+    );
+    const sibling = this.one<{ id: string }>(
+      'SELECT id FROM folders WHERE workspace_id=? AND parent_id IS ? AND name=?',
+      workspaceId,
+      parentId,
+      name,
+    );
+    requireThat(
+      !sibling || sibling.id === exceptId,
+      409,
+      'folder_exists',
+      'A folder with this name already exists here.',
+    );
+    requireThat(
+      !this.one(
+        'SELECT id FROM artifacts WHERE workspace_id=? AND path=?',
+        workspaceId,
+        path,
+      ),
+      409,
+      'path_exists',
+      'An artifact already uses that name.',
+    );
+    return path;
+  }
+  changeFolder(actor: Actor, input: unknown) {
+    const data = schema.changeFolder.parse(input);
+    return this.transaction(() => {
+      const current = this.catalog(actor, data.workspaceId);
+      this.access(actor, data.workspaceId, true);
+      requireThat(
+        current.version === data.expectedCatalogVersion,
+        409,
+        'catalog_conflict',
+        'The workspace organization changed. Refresh and review the contents before trying again.',
+      );
+      const folder = current.folders.find((f) => f.id === data.folderId);
+      requireThat(folder, 404, 'not_found', 'Folder not found.');
+      const descendants = new Set([folder.id]);
+      for (let changed = true; changed; ) {
+        changed = false;
+        for (const f of current.folders)
+          if (
+            f.parentId &&
+            descendants.has(f.parentId) &&
+            !descendants.has(f.id)
+          ) {
+            descendants.add(f.id);
+            changed = true;
+          }
+      }
+      const artifacts = current.artifacts.filter(
+        (a) => a.folderId && descendants.has(a.folderId),
+      );
+      if (data.remove) {
+        requireThat(
+          descendants.size === 1 && artifacts.length === 0,
+          409,
+          'folder_not_empty',
+          'Move all artifacts and subfolders out before deleting this folder, including archived artifacts.',
+        );
+        this.run('DELETE FROM folders WHERE id=?', folder.id);
+        this.audit(actor, 'folder.deleted', folder.name, {
+          workspaceId: data.workspaceId,
+          folderId: folder.id,
+        });
+      } else {
+        requireThat(
+          data.expectedArtifacts.length === artifacts.length,
+          409,
+          'catalog_conflict',
+          'The folder contents changed. Refresh before trying again.',
+        );
+        for (const a of artifacts) {
+          const expected = data.expectedArtifacts.find((e) => e.id === a.id);
+          requireThat(
+            expected,
+            409,
+            'catalog_conflict',
+            'The folder contents changed. Refresh before trying again.',
+          );
+          this.checkRevision(a, expected.expectedRevisionId);
+          requireThat(
+            a.metadataVersion === expected.expectedMetadataVersion,
+            409,
+            'metadata_conflict',
+            'An artifact was reorganized elsewhere. Refresh before trying again.',
+          );
+        }
+        const parentId =
+          data.parentId === undefined ? folder.parentId : data.parentId;
+        requireThat(
+          !parentId || !descendants.has(parentId),
+          400,
+          'folder_cycle',
+          'A folder cannot be moved into itself or one of its subfolders.',
+        );
+        const name = data.name ?? folder.name;
+        const oldPath = this.folderPath(data.workspaceId, folder.id).join('/');
+        const newPath = this.checkFolderDestination(
+          data.workspaceId,
+          parentId,
+          name,
+          folder.id,
+        );
+        // Validate every path before any update. Historical aliases also reserve
+        // names; moves never steal another artifact's existing links.
+        const changes = artifacts.map((a) => ({
+          a,
+          path: schema.path.parse(newPath + a.path.slice(oldPath.length)),
+        }));
+        for (const { a, path } of changes)
+          requireThat(
+            !this.one(
+              'SELECT artifact_id FROM artifact_paths WHERE workspace_id=? AND path=? AND artifact_id<>?',
+              data.workspaceId,
+              path,
+              a.id,
+            ),
+            409,
+            'path_exists',
+            'An artifact or its previous name already uses a destination path.',
+          );
+        for (const f of current.folders.filter((f) => descendants.has(f.id))) {
+          const next =
+            newPath +
+            this.folderPath(data.workspaceId, f.id)
+              .join('/')
+              .slice(oldPath.length);
+          requireThat(
+            next.length <= 220,
+            400,
+            'invalid_path',
+            'This move would make a nested folder path too long.',
+          );
+        }
+        this.run(
+          'UPDATE folders SET name=?,parent_id=? WHERE id=?',
+          name,
+          parentId,
+          folder.id,
+        );
+        for (const { a, path } of changes)
+          if (a.path !== path) {
+            this.run(
+              'INSERT OR IGNORE INTO artifact_paths VALUES(?,?,?)',
+              data.workspaceId,
+              path,
+              a.id,
+            );
+            this.run(
+              'UPDATE artifacts SET path=?,metadata_version=metadata_version+1,updated_at=? WHERE id=?',
+              path,
+              now(),
+              a.id,
+            );
+          }
+        this.audit(actor, 'folder.updated', name, {
+          workspaceId: data.workspaceId,
+          folderId: folder.id,
+          from: oldPath,
+          to: newPath,
+          artifacts: artifacts.length,
+        });
+      }
+      return this.catalog(actor, data.workspaceId);
+    });
+  }
+
   one<T>(sql: string, ...params: SQLInputValue[]) {
     return this.db.prepare(sql).get(...params) as T | undefined;
   }
@@ -268,7 +465,7 @@ export class Store {
       this.run("UPDATE users SET org_role='admin' WHERE id=?", user.id);
       const actor = { user };
       const workspace = this.createWorkspace(actor, { name: 'My workspace' });
-      this.createDocument(actor, {
+      this.createArtifact(actor, {
         workspaceId: workspace.id,
         path: 'welcome.md',
         body: welcome,
@@ -334,7 +531,9 @@ export class Store {
       now(),
     );
     const user = row && this.user(row.userId);
-    return user ? { user } : undefined;
+    return user
+      ? { user, session: { hash: digest(token), requireSso } }
+      : undefined;
   }
   logout(token: string) {
     this.run('DELETE FROM sessions WHERE hash=?', digest(token));
@@ -403,7 +602,7 @@ export class Store {
   workspaces(actor: Actor) {
     this.active(actor);
     return this.all<Workspace>(
-      `SELECT w.id,w.name,w.created_at createdAt,m.role,(SELECT count(*) FROM documents WHERE workspace_id=w.id AND archived_at IS NULL) documentCount FROM workspaces w JOIN effective_members m ON m.workspace_id=w.id WHERE m.user_id=? ORDER BY w.created_at`,
+      `SELECT w.id,w.name,w.created_at createdAt,m.role,(SELECT count(*) FROM artifacts WHERE workspace_id=w.id AND archived_at IS NULL) artifactCount FROM workspaces w JOIN effective_members m ON m.workspace_id=w.id WHERE m.user_id=? ORDER BY w.created_at`,
       actor.user.id,
     ).filter((w) => !actor.token || w.id === actor.token.workspaceId);
   }
@@ -421,67 +620,72 @@ export class Store {
     const id = randomUUID(),
       createdAt = now();
     this.transaction(() => {
-      this.run('INSERT INTO workspaces VALUES(?,?,?)', id, name, createdAt);
+      this.run(
+        'INSERT INTO workspaces(id,name,created_at) VALUES(?,?,?)',
+        id,
+        name,
+        createdAt,
+      );
       this.run('INSERT INTO members VALUES(?,?,?)', id, actor.user.id, 'owner');
       this.audit(actor, 'workspace.created', name, { workspaceId: id });
     });
-    return { id, name, createdAt, role: 'owner', documentCount: 0 };
+    return { id, name, createdAt, role: 'owner', artifactCount: 0 };
   }
-  documents(actor: Actor, workspaceId: string, includeArchived = false) {
+  artifacts(actor: Actor, workspaceId: string, includeArchived = false) {
     this.access(actor, workspaceId);
-    return this.all<DocumentSummary>(
-      'SELECT id,workspace_id workspaceId,path,current_revision_id currentRevisionId,updated_at updatedAt,archived_at archivedAt,metadata_version metadataVersion FROM documents WHERE workspace_id=? AND (? OR archived_at IS NULL) ORDER BY path',
+    return this.all<ArtifactSummary>(
+      'SELECT id,workspace_id workspaceId,path,current_revision_id currentRevisionId,updated_at updatedAt,archived_at archivedAt,metadata_version metadataVersion,folder_id folderId FROM artifacts WHERE workspace_id=? AND (? OR archived_at IS NULL) ORDER BY path',
       workspaceId,
       Number(includeArchived),
     );
   }
-  private documentRow(actor: Actor, documentId: string, write = false) {
-    const doc = this.one<DocumentSummary>(
-      'SELECT id,workspace_id workspaceId,path,current_revision_id currentRevisionId,updated_at updatedAt,archived_at archivedAt,metadata_version metadataVersion FROM documents WHERE id=?',
-      documentId,
+  private artifactRow(actor: Actor, artifactId: string, write = false) {
+    const doc = this.one<ArtifactSummary>(
+      'SELECT id,workspace_id workspaceId,path,current_revision_id currentRevisionId,updated_at updatedAt,archived_at archivedAt,metadata_version metadataVersion,folder_id folderId FROM artifacts WHERE id=?',
+      artifactId,
     );
-    requireThat(doc, 404, 'not_found', 'Document not found.');
+    requireThat(doc, 404, 'not_found', 'Artifact not found.');
     this.access(actor, doc.workspaceId, write);
     if (write)
       requireThat(
         !doc.archivedAt,
         409,
-        'document_archived',
-        'This document is archived. Unarchive it before making changes. Your draft is kept.',
+        'artifact_archived',
+        'This artifact is archived. Unarchive it before making changes. Your draft is kept.',
       );
     return doc;
   }
-  document(actor: Actor, documentId: string): Document {
-    const doc = this.documentRow(actor, documentId);
+  artifact(actor: Actor, artifactId: string): Artifact {
+    const doc = this.artifactRow(actor, artifactId);
     return {
       ...doc,
-      revision: this.revisionRow(documentId, doc.currentRevisionId),
-      reviews: this.reviews(actor, documentId),
+      revision: this.revisionRow(artifactId, doc.currentRevisionId),
+      reviews: this.reviews(actor, artifactId),
     };
   }
-  private revisionRow(documentId: string, revisionId: string) {
+  private revisionRow(artifactId: string, revisionId: string) {
     const row = this.one<Revision>(
-      'SELECT id,document_id documentId,number,body,author_name authorName,agent_name agentName,created_at createdAt,restored_from restoredFrom FROM revisions WHERE document_id=? AND id=?',
-      documentId,
+      'SELECT id,artifact_id artifactId,number,body,author_name authorName,agent_name agentName,created_at createdAt,restored_from restoredFrom FROM revisions WHERE artifact_id=? AND id=?',
+      artifactId,
       revisionId,
     );
-    requireThat(row, 404, 'not_found', 'Revision not found for this document.');
+    requireThat(row, 404, 'not_found', 'Revision not found for this artifact.');
     return row;
   }
-  revisions(actor: Actor, documentId: string) {
-    this.documentRow(actor, documentId);
+  revisions(actor: Actor, artifactId: string) {
+    this.artifactRow(actor, artifactId);
     return this.all<Omit<Revision, 'body'>>(
-      'SELECT id,document_id documentId,number,author_name authorName,agent_name agentName,created_at createdAt,restored_from restoredFrom FROM revisions WHERE document_id=? ORDER BY number DESC',
-      documentId,
+      'SELECT id,artifact_id artifactId,number,author_name authorName,agent_name agentName,created_at createdAt,restored_from restoredFrom FROM revisions WHERE artifact_id=? ORDER BY number DESC',
+      artifactId,
     );
   }
-  revision(actor: Actor, documentId: string, revisionId: string) {
-    this.documentRow(actor, documentId);
-    return this.revisionRow(documentId, revisionId);
+  revision(actor: Actor, artifactId: string, revisionId: string) {
+    this.artifactRow(actor, artifactId);
+    return this.revisionRow(artifactId, revisionId);
   }
   private insertRevision(
     actor: Actor,
-    documentId: string,
+    artifactId: string,
     body: string,
     number: number,
     restoredFrom: string | null = null,
@@ -491,7 +695,7 @@ export class Store {
     this.run(
       'INSERT INTO revisions VALUES(?,?,?,?,?,?,?,?,?)',
       id,
-      documentId,
+      artifactId,
       number,
       body,
       actor.user.name,
@@ -501,11 +705,11 @@ export class Store {
       restoredFrom,
     );
     const source = this.one<{ path: string; currentRevisionId: string }>(
-      'SELECT path,current_revision_id currentRevisionId FROM documents WHERE id=?',
-      documentId,
+      'SELECT path,current_revision_id currentRevisionId FROM artifacts WHERE id=?',
+      artifactId,
     )!;
     const base = restoredFrom ?? source.currentRevisionId;
-    for (const href of documentLinks(body)) {
+    for (const href of artifactLinks(body, source.path)) {
       const previous = this.one<{ path: string }>(
         'SELECT target_path path FROM revision_links WHERE revision_id=? AND href=?',
         base,
@@ -519,59 +723,72 @@ export class Store {
       );
     }
     this.run(
-      'UPDATE documents SET current_revision_id=?,updated_at=? WHERE id=?',
+      'UPDATE artifacts SET current_revision_id=?,updated_at=? WHERE id=?',
       id,
       createdAt,
-      documentId,
+      artifactId,
     );
   }
-  createDocument(actor: Actor, input: unknown) {
-    const data = schema.createDocument.parse(input);
+  createArtifact(actor: Actor, input: unknown) {
+    const data = schema.createArtifact.parse(input);
     this.access(actor, data.workspaceId, true);
     // Reuse an existing transaction during initial setup.
     const create = () => {
       requireThat(
         !this.one(
-          'SELECT document_id id FROM document_paths WHERE workspace_id=? AND path=?',
+          'SELECT artifact_id id FROM artifact_paths WHERE workspace_id=? AND path=?',
           data.workspaceId,
           data.path,
         ),
         409,
         'path_exists',
-        'A document already uses that path.',
+        'An artifact already uses that path.',
+      );
+      const folderId = this.ensureFolderPath(data.workspaceId, data.path);
+      requireThat(
+        !this.one(
+          'SELECT id FROM folders WHERE workspace_id=? AND parent_id IS ? AND name=?',
+          data.workspaceId,
+          folderId,
+          data.path.split('/').pop()!,
+        ),
+        409,
+        'folder_exists',
+        'A folder already uses that name.',
       );
       const id = randomUUID();
       this.run(
-        'INSERT INTO documents(id,workspace_id,path,current_revision_id,updated_at) VALUES(?,?,?,?,?)',
+        'INSERT INTO artifacts(id,workspace_id,path,current_revision_id,updated_at,folder_id) VALUES(?,?,?,?,?,?)',
         id,
         data.workspaceId,
         data.path,
         '',
         now(),
+        folderId,
       );
       this.run(
-        'INSERT INTO document_paths VALUES(?,?,?)',
+        'INSERT INTO artifact_paths VALUES(?,?,?)',
         data.workspaceId,
         data.path,
         id,
       );
       this.insertRevision(actor, id, data.body, 1);
-      return this.document(actor, id);
+      return this.artifact(actor, id);
     };
     return this.db.isTransaction ? create() : this.transaction(create);
   }
-  updateDocument(actor: Actor, input: unknown) {
-    const data = schema.updateDocument.parse(input);
+  updateArtifact(actor: Actor, input: unknown) {
+    const data = schema.updateArtifact.parse(input);
     return this.transaction(() => {
-      const doc = this.documentRow(actor, data.documentId, true);
+      const doc = this.artifactRow(actor, data.artifactId, true);
       this.checkRevision(doc, data.expectedRevisionId);
       const current = this.revisionRow(doc.id, doc.currentRevisionId);
       if (current.body !== data.body)
         this.insertRevision(actor, doc.id, data.body, current.number + 1);
-      return this.document(actor, doc.id);
+      return this.artifact(actor, doc.id);
     });
   }
-  private checkRevision(doc: DocumentSummary, expected: string) {
+  private checkRevision(doc: ArtifactSummary, expected: string) {
     if (doc.currentRevisionId !== expected)
       throw new AppError(
         409,
@@ -581,9 +798,9 @@ export class Store {
       );
   }
   restore(actor: Actor, input: unknown) {
-    const data = schema.restoreDocument.parse(input);
+    const data = schema.restoreArtifact.parse(input);
     return this.transaction(() => {
-      const doc = this.documentRow(actor, data.documentId, true);
+      const doc = this.artifactRow(actor, data.artifactId, true);
       this.checkRevision(doc, data.expectedRevisionId);
       const target = this.revisionRow(doc.id, data.revisionId);
       const current = this.revisionRow(doc.id, doc.currentRevisionId);
@@ -594,36 +811,36 @@ export class Store {
         current.number + 1,
         target.id,
       );
-      return this.document(actor, doc.id);
+      return this.artifact(actor, doc.id);
     });
   }
-  feedback(actor: Actor, documentId: string, revisionId: string) {
-    const doc = this.documentRow(actor, documentId);
-    const revision = this.revisionRow(documentId, revisionId);
+  feedback(actor: Actor, artifactId: string, revisionId: string) {
+    const doc = this.artifactRow(actor, artifactId);
+    const revision = this.revisionRow(artifactId, revisionId);
     return {
       markdown: formatFeedback(
         doc.path,
         revision,
-        this.reviews(actor, documentId),
-        this.comments(actor, documentId),
-        this.revisions(actor, documentId),
+        this.reviews(actor, artifactId),
+        this.comments(actor, artifactId),
+        this.revisions(actor, artifactId),
       ),
     };
   }
-  reviews(actor: Actor, documentId: string): ReviewDecision[] {
-    this.documentRow(actor, documentId);
+  reviews(actor: Actor, artifactId: string): ReviewDecision[] {
+    this.artifactRow(actor, artifactId);
     return this.all<ReviewDecision>(
       `SELECT r.id,r.revision_id revisionId,v.number revisionNumber,r.reviewer_id reviewerId,
        r.reviewer_name reviewerName,r.decision,r.note,r.created_at createdAt
        FROM reviews r JOIN revisions v ON v.id=r.revision_id
-       WHERE r.document_id=? ORDER BY r.rowid`,
-      documentId,
+       WHERE r.artifact_id=? ORDER BY r.rowid`,
+      artifactId,
     );
   }
   review(actor: Actor, input: unknown) {
     const data = schema.review.parse(input);
     return this.transaction(() => {
-      const doc = this.documentRow(actor, data.documentId, true);
+      const doc = this.artifactRow(actor, data.artifactId, true);
       requireThat(
         !actor.token,
         403,
@@ -649,7 +866,7 @@ export class Store {
         now(),
       );
       const rounds = this.all<{ id: string; requesterId: string }>(
-        'SELECT id,requester_id requesterId FROM review_requests WHERE document_id=? AND revision_id=? AND reviewer_id=? AND cancelled_at IS NULL AND closed_review_rowid IS NULL',
+        'SELECT id,requester_id requesterId FROM review_requests WHERE artifact_id=? AND revision_id=? AND reviewer_id=? AND cancelled_at IS NULL AND closed_review_rowid IS NULL',
         doc.id,
         doc.currentRevisionId,
         actor.user.id,
@@ -671,7 +888,7 @@ export class Store {
           preview: data.note,
         });
       }
-      return this.document(actor, doc.id);
+      return this.artifact(actor, doc.id);
     });
   }
   reviewers(actor: Actor, workspaceId: string): Reviewer[] {
@@ -686,16 +903,16 @@ export class Store {
   reviewRequests(
     actor: Actor,
     workspaceId: string,
-    documentId?: string,
+    artifactId?: string,
   ): ReviewRequest[] {
     const role = this.access(actor, workspaceId);
-    if (documentId) {
-      const doc = this.documentRow(actor, documentId);
+    if (artifactId) {
+      const doc = this.artifactRow(actor, artifactId);
       requireThat(
         doc.workspaceId === workspaceId,
         404,
         'not_found',
-        'Document not found in this workspace.',
+        'Artifact not found in this workspace.',
       );
     }
     type Row = Omit<
@@ -708,19 +925,19 @@ export class Store {
       reviewerRole: string | null;
     };
     return this.all<Row>(
-      `SELECT q.id,d.workspace_id workspaceId,q.document_id documentId,d.path,
+      `SELECT q.id,d.workspace_id workspaceId,q.artifact_id artifactId,d.path,
       q.revision_id revisionId,v.number revisionNumber,q.base_revision_id baseRevisionId,
       q.reviewer_id reviewerId,q.reviewer_name reviewerName,q.requester_id requesterId,q.requester_name requesterName,
       q.requester_token_id requesterTokenId,q.agent_name agentName,q.message,q.created_at createdAt,
       q.after_review_rowid afterReviewRowid,q.closed_review_rowid closedReviewRowid,q.supersedes_id supersedesId,
       (SELECT id FROM review_requests WHERE supersedes_id=q.id) supersededBy,
       q.cancelled_at cancelledAt,q.cancelled_by cancelledBy,q.version,d.current_revision_id currentRevisionId,d.archived_at archivedAt,m.role reviewerRole
-      FROM review_requests q JOIN documents d ON d.id=q.document_id JOIN revisions v ON v.id=q.revision_id
+      FROM review_requests q JOIN artifacts d ON d.id=q.artifact_id JOIN revisions v ON v.id=q.revision_id
       LEFT JOIN effective_members m ON m.workspace_id=d.workspace_id AND m.user_id=q.reviewer_id
       WHERE d.workspace_id=? AND (? IS NULL OR d.id=?) ORDER BY q.rowid DESC`,
       workspaceId,
-      documentId ?? null,
-      documentId ?? null,
+      artifactId ?? null,
+      artifactId ?? null,
     ).map(
       ({
         requesterTokenId,
@@ -748,7 +965,7 @@ export class Store {
             : decision && decision.decision !== 'withdrawn'
               ? decision.decision
               : row.archivedAt
-                ? 'document_archived'
+                ? 'artifact_archived'
                 : !['owner', 'editor'].includes(reviewerRole ?? '')
                   ? 'reviewer_unavailable'
                   : 'waiting';
@@ -770,12 +987,12 @@ export class Store {
     );
   }
   reviewRequest(actor: Actor, requestId: string) {
-    const row = this.one<{ documentId: string }>(
-      'SELECT document_id documentId FROM review_requests WHERE id=?',
+    const row = this.one<{ artifactId: string }>(
+      'SELECT artifact_id artifactId FROM review_requests WHERE id=?',
       requestId,
     );
     requireThat(row, 404, 'not_found', 'Review request not found.');
-    const doc = this.documentRow(actor, row.documentId);
+    const doc = this.artifactRow(actor, row.artifactId);
     return this.reviewRequests(actor, doc.workspaceId, doc.id).find(
       (r) => r.id === requestId,
     )!;
@@ -785,12 +1002,12 @@ export class Store {
     data: ReturnType<typeof schema.requestReview.parse>,
     supersedesId: string | null = null,
   ) {
-    const doc = this.documentRow(actor, data.documentId, true);
+    const doc = this.artifactRow(actor, data.artifactId, true);
     requireThat(
       doc.currentRevisionId === data.expectedRevisionId,
       409,
       'request_revision_conflict',
-      'The document changed. Read the latest revision before requesting review. Your message has been kept.',
+      'The artifact changed. Read the latest revision before requesting review. Your message has been kept.',
     );
     const reviewer = this.reviewers(actor, doc.workspaceId).find(
       (r) => r.id === data.reviewerId,
@@ -829,7 +1046,7 @@ export class Store {
     )!.value;
     this.run(
       `INSERT INTO review_requests
-      (id,document_id,revision_id,base_revision_id,reviewer_id,reviewer_name,requester_id,requester_name,requester_token_id,agent_name,message,created_at,after_review_rowid,supersedes_id)
+      (id,artifact_id,revision_id,base_revision_id,reviewer_id,reviewer_name,requester_id,requester_name,requester_token_id,agent_name,message,created_at,after_review_rowid,supersedes_id)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       id,
       doc.id,
@@ -864,7 +1081,7 @@ export class Store {
     expectedVersion: number,
   ) {
     const request = this.reviewRequest(actor, requestId);
-    this.documentRow(actor, request.documentId, true);
+    this.artifactRow(actor, request.artifactId, true);
     requireThat(
       request.canManage,
       403,
@@ -922,7 +1139,7 @@ export class Store {
       const next = this.insertReviewRequest(
         actor,
         {
-          documentId: request.documentId,
+          artifactId: request.artifactId,
           expectedRevisionId: data.expectedRevisionId,
           reviewerId: request.reviewerId,
           message: data.message ?? request.message,
@@ -936,8 +1153,8 @@ export class Store {
       return next;
     });
   }
-  comments(actor: Actor, documentId: string): Comment[] {
-    this.documentRow(actor, documentId);
+  comments(actor: Actor, artifactId: string): Comment[] {
+    this.artifactRow(actor, artifactId);
     return this.all<
       Omit<Comment, 'anchor' | 'resolved' | 'replies' | 'images' | 'diff'> & {
         anchor: string | null;
@@ -948,11 +1165,11 @@ export class Store {
         authorTokenId: string | null;
       }
     >(
-      'SELECT id,document_id documentId,revision_id revisionId,body,quote,kind,label_tip labelTip,images,anchor,diff,resolved,version,updated_at updatedAt,author_id authorId,author_token_id authorTokenId,author_name authorName,agent_name agentName,created_at createdAt FROM comments WHERE document_id=? ORDER BY created_at',
-      documentId,
+      'SELECT id,artifact_id artifactId,revision_id revisionId,body,quote,kind,label_tip labelTip,images,anchor,diff,resolved,version,updated_at updatedAt,author_id authorId,author_token_id authorTokenId,author_name authorName,agent_name agentName,created_at createdAt FROM comments WHERE artifact_id=? ORDER BY created_at',
+      artifactId,
     ).map(({ authorId, authorTokenId, ...row }) => ({
       ...row,
-      ...this.commentPermissions(actor, documentId, {
+      ...this.commentPermissions(actor, artifactId, {
         authorId,
         authorTokenId,
         agentName: row.agentName,
@@ -974,36 +1191,46 @@ export class Store {
       ),
     }));
   }
-  addComment(actor: Actor, input: unknown) {
+  async addComment(actor: Actor, input: unknown) {
     const data = schema.addComment.parse(input);
-    this.documentRow(actor, data.documentId, true);
-    if (!data.submissionId) return this.insertComment(actor, data);
+    const artifact = this.artifactRow(actor, data.artifactId, true);
+    if (artifactFormat(artifact.path) === 'html' && !data.diff) {
+      const { anchor } = buildPersistedHtmlAnchor({
+        ...data.anchor,
+        originalText: data.quote,
+      });
+      data.quote = anchor.originalText;
+      data.anchor = anchor;
+    }
     // A lost response must not create a second discussion. Keep receipts after
     // deletion too, so retrying cannot resurrect a deliberately deleted comment.
     const fingerprint = digest(JSON.stringify(data));
-    return this.transaction(() => {
+    const submitted = () => {
+      if (!data.submissionId) return;
       const receipt = this.one<{
-        documentId: string;
+        artifactId: string;
         authorId: string;
         tokenId: string | null;
         fingerprint: string;
         commentId: string;
       }>(
-        `SELECT document_id documentId, author_id authorId, author_token_id tokenId,
+        `SELECT artifact_id artifactId, author_id authorId, author_token_id tokenId,
           fingerprint, comment_id commentId FROM comment_submissions WHERE submission_id=?`,
         data.submissionId!,
       );
       if (receipt) {
         requireThat(
-          receipt.documentId === data.documentId &&
+          receipt.artifactId === data.artifactId &&
             receipt.authorId === actor.user.id &&
             receipt.tokenId === (actor.token?.id ?? null) &&
-            receipt.fingerprint === fingerprint,
+            (receipt.fingerprint === fingerprint ||
+              receipt.fingerprint ===
+                digest(JSON.stringify(legacyFields(data, true)))),
           409,
           'submission_conflict',
           'This submission ID has already been used.',
         );
-        const comment = this.comments(actor, data.documentId).find(
+        const comment = this.comments(actor, data.artifactId).find(
           (c) => c.id === receipt.commentId,
         );
         requireThat(
@@ -1014,20 +1241,50 @@ export class Store {
         );
         return comment;
       }
-      const comment = this.insertComment(actor, data);
-      this.run(
-        'INSERT INTO comment_submissions VALUES(?,?,?,?,?,?)',
-        data.submissionId!,
-        data.documentId,
-        actor.user.id,
-        actor.token?.id ?? null,
-        fingerprint,
-        comment.id,
+    };
+    const previous = submitted();
+    if (previous) return previous;
+    let block: CommentDiffBlock | undefined;
+    if (data.diff) {
+      const revision = this.revisionRow(data.artifactId, data.revisionId);
+      const base = this.revisionRow(data.artifactId, data.diff.baseRevisionId);
+      requireThat(
+        base.number < revision.number,
+        400,
+        'invalid_comparison',
+        'The baseline must precede the reviewed revision.',
       );
+      // The upstream engine runs outside both the event loop and SQLite transaction.
+      block = await commentDiffBlock(
+        base.body,
+        revision.body,
+        data.diff.blockIndex,
+      );
+    }
+    return this.transaction(() => {
+      // Membership, credentials, archive state and receipts may change while awaiting.
+      this.artifactRow(actor, data.artifactId, true);
+      const previous = submitted();
+      if (previous) return previous;
+      const comment = this.insertComment(actor, data, block);
+      if (data.submissionId)
+        this.run(
+          'INSERT INTO comment_submissions VALUES(?,?,?,?,?,?)',
+          data.submissionId,
+          data.artifactId,
+          actor.user.id,
+          actor.token?.id ?? null,
+          fingerprint,
+          comment.id,
+        );
       return comment;
     });
   }
-  private insertComment(actor: Actor, data: z.infer<typeof schema.addComment>) {
+  private insertComment(
+    actor: Actor,
+    data: z.infer<typeof schema.addComment>,
+    block?: CommentDiffBlock,
+  ) {
     requireThat(
       data.kind === 'deletion' ||
         data.body.length > 0 ||
@@ -1042,31 +1299,21 @@ export class Store {
       'invalid_quote',
       'Redlines and labels must refer to a passage.',
     );
-    this.documentRow(actor, data.documentId, true);
+    this.artifactRow(actor, data.artifactId, true);
     for (const image of data.images) {
       requireThat(
         this.one(
-          'SELECT id FROM images WHERE id=? AND document_id=?',
+          'SELECT id FROM images WHERE id=? AND artifact_id=?',
           image.path.split('/').pop()!,
-          data.documentId,
+          data.artifactId,
         ),
         400,
         'invalid_image',
-        'Use an image uploaded to this document.',
+        'Use an image uploaded to this artifact.',
       );
     }
-    const revision = this.revisionRow(data.documentId, data.revisionId);
+    const revision = this.revisionRow(data.artifactId, data.revisionId);
     if (data.diff) {
-      const base = this.revisionRow(data.documentId, data.diff.baseRevisionId);
-      requireThat(
-        base.number < revision.number,
-        400,
-        'invalid_comparison',
-        'The baseline must precede the reviewed revision.',
-      );
-      const block = computePlanDiff(base.body, revision.body).blocks[
-        data.diff.blockIndex
-      ];
       requireThat(
         block &&
           block.type !== 'unchanged' &&
@@ -1089,7 +1336,7 @@ export class Store {
         data.quote.length <= 8192,
         400,
         'invalid_quote',
-        'This change is too large to annotate as one passage. Leave a document discussion instead.',
+        'This change is too large to annotate as one passage. Leave an artifact discussion instead.',
       );
       data.anchor = {
         blockId: `diff-block-${data.diff.blockIndex}`,
@@ -1106,9 +1353,9 @@ export class Store {
     );
     const id = randomUUID();
     this.run(
-      'INSERT INTO comments (id,document_id,revision_id,body,quote,anchor,resolved,author_name,author_id,agent_name,created_at,kind,label_tip,images,author_token_id,diff) VALUES(?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO comments (id,artifact_id,revision_id,body,quote,anchor,resolved,author_name,author_id,agent_name,created_at,kind,label_tip,images,author_token_id,diff) VALUES(?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?)',
       id,
-      data.documentId,
+      data.artifactId,
       revision.id,
       data.body,
       data.quote,
@@ -1123,18 +1370,18 @@ export class Store {
       actor.token?.id ?? null,
       data.diff ? JSON.stringify(data.diff) : null,
     );
-    return this.comments(actor, data.documentId).find((c) => c.id === id)!;
+    return this.comments(actor, data.artifactId).find((c) => c.id === id)!;
   }
   private commentPermissions(
     actor: Actor,
-    documentId: string,
+    artifactId: string,
     row: {
       authorId: string;
       authorTokenId: string | null;
       agentName: string | null;
     },
   ) {
-    const doc = this.documentRow(actor, documentId);
+    const doc = this.artifactRow(actor, artifactId);
     const role = this.access(actor, doc.workspaceId);
     const writable =
       !doc.archivedAt && role !== 'viewer' && actor.token?.scope !== 'read';
@@ -1155,7 +1402,7 @@ export class Store {
     deleting = false,
   ) {
     const row = this.one<{
-      documentId: string;
+      artifactId: string;
       authorId: string;
       authorTokenId: string | null;
       agentName: string | null;
@@ -1163,12 +1410,12 @@ export class Store {
       kind: string;
       images: string;
     }>(
-      'SELECT document_id documentId,author_id authorId,author_token_id authorTokenId,agent_name agentName,version,kind,images FROM comments WHERE id=?',
+      'SELECT artifact_id artifactId,author_id authorId,author_token_id authorTokenId,agent_name agentName,version,kind,images FROM comments WHERE id=?',
       commentId,
     );
     requireThat(row, 404, 'not_found', 'Comment not found.');
-    this.documentRow(actor, row.documentId, true);
-    const permissions = this.commentPermissions(actor, row.documentId, row);
+    this.artifactRow(actor, row.artifactId, true);
+    const permissions = this.commentPermissions(actor, row.artifactId, row);
     requireThat(
       deleting ? permissions.canDelete : permissions.canEdit,
       403,
@@ -1207,7 +1454,7 @@ export class Store {
         now(),
         data.commentId,
       );
-      return this.comments(actor, row.documentId).find(
+      return this.comments(actor, row.artifactId).find(
         (c) => c.id === data.commentId,
       )!;
     });
@@ -1220,12 +1467,20 @@ export class Store {
         data.commentId,
         data.expectedVersion,
       );
-      const doc = this.documentRow(actor, row.documentId, true);
+      const doc = this.artifactRow(actor, row.artifactId, true);
+      if (artifactFormat(doc.path) === 'html') {
+        const { anchor } = buildPersistedHtmlAnchor({
+          ...data.anchor,
+          originalText: data.quote,
+        });
+        data.quote = anchor.originalText;
+        data.anchor = anchor;
+      }
       requireThat(
         doc.currentRevisionId === data.expectedRevisionId,
         409,
         'attachment_conflict',
-        'The document changed. Cancel reattachment and choose a passage in the latest revision.',
+        'The artifact changed. Cancel reattachment and choose a passage in the latest revision.',
       );
       this.run(
         'INSERT INTO comment_reattachments VALUES(?,?,?,?,?,?,?,?,?)',
@@ -1243,7 +1498,7 @@ export class Store {
         'UPDATE comments SET version=version+1 WHERE id=?',
         data.commentId,
       );
-      return this.comments(actor, row.documentId).find(
+      return this.comments(actor, row.artifactId).find(
         (c) => c.id === data.commentId,
       )!;
     });
@@ -1257,8 +1512,8 @@ export class Store {
       return { ok: true };
     });
   }
-  uploadImage(actor: Actor, documentId: string, data: Buffer) {
-    this.documentRow(actor, documentId, true);
+  uploadImage(actor: Actor, artifactId: string, data: Buffer) {
+    this.artifactRow(actor, artifactId, true);
     requireThat(
       Buffer.isBuffer(data) &&
         data.length > 0 &&
@@ -1289,7 +1544,7 @@ export class Store {
     this.run(
       'INSERT INTO images VALUES(?,?,?,?,?,?)',
       id,
-      documentId,
+      artifactId,
       mime,
       data,
       actor.user.id,
@@ -1299,21 +1554,21 @@ export class Store {
   }
   image(actor: Actor, id: string) {
     const image = this.one<{
-      documentId: string;
+      artifactId: string;
       mime: string;
       data: Uint8Array;
-    }>('SELECT document_id documentId,mime,data FROM images WHERE id=?', id);
+    }>('SELECT artifact_id artifactId,mime,data FROM images WHERE id=?', id);
     requireThat(image, 404, 'not_found', 'Image not found.');
-    this.documentRow(actor, image.documentId);
+    this.artifactRow(actor, image.artifactId);
     return image;
   }
   private commentRow(actor: Actor, commentId: string) {
-    const row = this.one<{ documentId: string; resolved: number }>(
-      'SELECT document_id documentId,resolved FROM comments WHERE id=?',
+    const row = this.one<{ artifactId: string; resolved: number }>(
+      'SELECT artifact_id artifactId,resolved FROM comments WHERE id=?',
       commentId,
     );
     requireThat(row, 404, 'not_found', 'Comment not found.');
-    this.documentRow(actor, row.documentId, true);
+    this.artifactRow(actor, row.artifactId, true);
     return row;
   }
   reply(actor: Actor, input: unknown) {
@@ -1346,14 +1601,14 @@ export class Store {
         'UPDATE comments SET version=version+1 WHERE id=?',
         data.commentId,
       );
-      this.notify(actor, row.documentId, recipients, {
+      this.notify(actor, row.artifactId, recipients, {
         kind: 'reply',
         eventKey: `reply:${id}`,
         commentId: data.commentId,
         replyId: id,
         preview: data.body,
       });
-      return this.comments(actor, row.documentId).find(
+      return this.comments(actor, row.artifactId).find(
         (c) => c.id === data.commentId,
       )!;
     });
@@ -1366,7 +1621,7 @@ export class Store {
       Number(data.resolved),
       data.commentId,
     );
-    return this.comments(actor, row.documentId).find(
+    return this.comments(actor, row.artifactId).find(
       (c) => c.id === data.commentId,
     )!;
   }
@@ -1596,6 +1851,22 @@ export class Store {
       'unauthorized',
       'This account is unavailable. Sign in again.',
     );
+    if (actor.session)
+      requireThat(
+        this.one(
+          `SELECT s.user_id FROM sessions s JOIN users u ON u.id=s.user_id
+           WHERE s.hash=? AND s.user_id=? AND s.expires_at>?
+           AND (?=0 OR s.auth_method='entra' OR u.recovery_until>?)`,
+          actor.session.hash,
+          actor.user.id,
+          now(),
+          Number(actor.session.requireSso),
+          now(),
+        ),
+        401,
+        'unauthorized',
+        'This session was revoked or expired. Sign in again.',
+      );
     if (actor.token)
       requireThat(
         this.one(
@@ -2303,29 +2574,35 @@ export class Store {
       };
     });
   }
-  changeDocument(actor: Actor, input: unknown) {
-    const data = schema.changeDocument.parse(input);
+  changeArtifact(actor: Actor, input: unknown) {
+    const data = schema.changeArtifact.parse(input);
     return this.transaction(() => {
-      const doc = this.documentRow(actor, data.documentId);
+      const doc = this.artifactRow(actor, data.artifactId);
       this.access(actor, doc.workspaceId, true);
       this.checkRevision(doc, data.expectedRevisionId);
       requireThat(
         doc.metadataVersion === data.expectedMetadataVersion,
         409,
         'metadata_conflict',
-        'This document was renamed or archived elsewhere. Refresh before trying again.',
+        'This artifact was renamed or archived elsewhere. Refresh before trying again.',
       );
       const path = data.path ?? doc.path;
       requireThat(
+        artifactFormat(path) === artifactFormat(doc.path),
+        400,
+        'artifact_format_change',
+        'Keep the artifact format when renaming. Create a new artifact to change formats.',
+      );
+      requireThat(
         !this.one(
-          'SELECT document_id id FROM document_paths WHERE workspace_id=? AND path=? AND document_id<>?',
+          'SELECT artifact_id id FROM artifact_paths WHERE workspace_id=? AND path=? AND artifact_id<>?',
           doc.workspaceId,
           path,
           doc.id,
         ),
         409,
         'path_exists',
-        'That path belongs to another document, including its previous names. Choose a different path.',
+        'That path belongs to another artifact, including its previous names. Choose a different path.',
       );
       const archivedAt =
         data.archived === undefined
@@ -2333,35 +2610,48 @@ export class Store {
           : data.archived
             ? (doc.archivedAt ?? now())
             : null;
+      const folderId = this.ensureFolderPath(doc.workspaceId, path);
+      requireThat(
+        !this.one(
+          'SELECT id FROM folders WHERE workspace_id=? AND parent_id IS ? AND name=?',
+          doc.workspaceId,
+          folderId,
+          path.split('/').pop()!,
+        ),
+        409,
+        'folder_exists',
+        'A folder already uses that name.',
+      );
       if (path !== doc.path)
         this.run(
-          'INSERT OR IGNORE INTO document_paths VALUES(?,?,?)',
+          'INSERT OR IGNORE INTO artifact_paths VALUES(?,?,?)',
           doc.workspaceId,
           path,
           doc.id,
         );
       if (path !== doc.path || archivedAt !== doc.archivedAt) {
         this.run(
-          'UPDATE documents SET path=?,archived_at=?,metadata_version=metadata_version+1,updated_at=? WHERE id=?',
+          'UPDATE artifacts SET path=?,archived_at=?,folder_id=?,metadata_version=metadata_version+1,updated_at=? WHERE id=?',
           path,
           archivedAt,
+          folderId,
           now(),
           doc.id,
         );
       }
-      return this.document(actor, doc.id);
+      return this.artifact(actor, doc.id);
     });
   }
-  resolveLink(actor: Actor, documentId: string, input: unknown) {
+  resolveLink(actor: Actor, artifactId: string, input: unknown) {
     const data = z
       .object({ revisionId: schema.id, href: z.string().min(1).max(2048) })
       .parse(input);
-    const doc = this.documentRow(actor, documentId);
+    const doc = this.artifactRow(actor, artifactId);
     this.revisionRow(doc.id, data.revisionId);
     if (data.href.startsWith('#'))
       return {
         workspaceId: doc.workspaceId,
-        documentId: doc.id,
+        artifactId: doc.id,
         fragment: data.href.slice(1),
       };
     const binding = this.one<{ path: string }>(
@@ -2370,32 +2660,32 @@ export class Store {
       data.href,
     );
     const path = binding?.path ?? relativePath(data.href, doc.path);
-    requireThat(path, 400, 'invalid_link', 'Use a relative document link.');
+    requireThat(path, 400, 'invalid_link', 'Use a relative artifact link.');
     const target = this.one<{ id: string }>(
-      'SELECT document_id id FROM document_paths WHERE workspace_id=? AND path=?',
+      'SELECT artifact_id id FROM artifact_paths WHERE workspace_id=? AND path=?',
       doc.workspaceId,
       path,
     );
-    requireThat(target, 404, 'not_found', 'No document found for this link.');
-    this.documentRow(actor, target.id);
+    requireThat(target, 404, 'not_found', 'No artifact found for this link.');
+    this.artifactRow(actor, target.id);
     return {
       workspaceId: doc.workspaceId,
-      documentId: target.id,
+      artifactId: target.id,
       fragment: new URL(data.href, 'https://workspace.invalid/').hash.slice(1),
     };
   }
   search(actor: Actor, input: unknown): SearchHit[] {
     this.active(actor);
-    const data = schema.searchDocuments.parse(input);
+    const data = schema.searchArtifacts.parse(input);
     if (data.workspaceId) this.access(actor, data.workspaceId);
     const words = data.query.match(/[\p{L}\p{N}_]+/gu)?.slice(0, 16);
     if (!words?.length) return [];
     const query = words.map((w) => `"${w}"*`).join(' AND ');
     return this.all<SearchHit>(
-      `SELECT d.id,d.workspace_id workspaceId,w.name workspaceName,d.path,d.current_revision_id currentRevisionId,d.updated_at updatedAt,d.archived_at archivedAt,d.metadata_version metadataVersion,snippet(document_search,2,'','',' … ',32) snippet
-      FROM document_search JOIN documents d ON d.id=document_search.document_id JOIN workspaces w ON w.id=d.workspace_id JOIN effective_members m ON m.workspace_id=d.workspace_id AND m.user_id=?
-      WHERE document_search MATCH ? AND (? IS NULL OR d.workspace_id=?) AND (? IS NULL OR d.workspace_id=?) AND (? OR d.archived_at IS NULL)
-      ORDER BY bm25(document_search,0,4,1),d.path LIMIT 100`,
+      `SELECT d.id,d.workspace_id workspaceId,w.name workspaceName,d.path,d.current_revision_id currentRevisionId,d.updated_at updatedAt,d.archived_at archivedAt,d.metadata_version metadataVersion,d.folder_id folderId,snippet(artifact_search,2,'','',' … ',32) snippet
+      FROM artifact_search JOIN artifacts d ON d.id=artifact_search.artifact_id JOIN workspaces w ON w.id=d.workspace_id JOIN effective_members m ON m.workspace_id=d.workspace_id AND m.user_id=?
+      WHERE artifact_search MATCH ? AND (? IS NULL OR d.workspace_id=?) AND (? IS NULL OR d.workspace_id=?) AND (? OR d.archived_at IS NULL)
+      ORDER BY bm25(artifact_search,0,4,1),d.path LIMIT 100`,
       actor.user.id,
       query,
       data.workspaceId ?? null,
@@ -2419,7 +2709,7 @@ export class Store {
   }
   private notify(
     actor: Actor,
-    documentId: string,
+    artifactId: string,
     recipients: string[],
     event: {
       kind: WorkspaceNotification['kind'];
@@ -2430,7 +2720,7 @@ export class Store {
       preview: string;
     },
   ) {
-    const doc = this.documentRow(actor, documentId);
+    const doc = this.artifactRow(actor, artifactId);
     for (const userId of new Set(recipients)) {
       if (
         (!actor.token && userId === actor.user.id) ||
@@ -2443,9 +2733,9 @@ export class Store {
       )
         continue;
       this.run(
-        'INSERT OR IGNORE INTO notifications(user_id,document_id,kind,event_key,request_id,comment_id,reply_id,actor_name,preview,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
+        'INSERT OR IGNORE INTO notifications(user_id,artifact_id,kind,event_key,request_id,comment_id,reply_id,actor_name,preview,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',
         userId,
-        documentId,
+        artifactId,
         event.kind,
         event.eventKey,
         event.requestId ?? null,
@@ -2468,13 +2758,13 @@ export class Store {
       'Notifications require a browser session.',
     );
     const items = this.all<WorkspaceNotification>(
-      `SELECT n.id,n.kind,n.document_id documentId,d.workspace_id workspaceId,w.name workspaceName,d.path,n.request_id requestId,n.comment_id commentId,n.actor_name actorName,n.preview,n.created_at createdAt,n.read_at readAt
-      FROM notifications n JOIN documents d ON d.id=n.document_id JOIN workspaces w ON w.id=d.workspace_id JOIN effective_members m ON m.workspace_id=w.id AND m.user_id=n.user_id
+      `SELECT n.id,n.kind,n.artifact_id artifactId,d.workspace_id workspaceId,w.name workspaceName,d.path,n.request_id requestId,n.comment_id commentId,n.actor_name actorName,n.preview,n.created_at createdAt,n.read_at readAt
+      FROM notifications n JOIN artifacts d ON d.id=n.artifact_id JOIN workspaces w ON w.id=d.workspace_id JOIN effective_members m ON m.workspace_id=w.id AND m.user_id=n.user_id
       WHERE n.user_id=? ORDER BY n.id DESC LIMIT 100`,
       actor.user.id,
     );
     const count = this.one<{ count: number }>(
-      `SELECT count(*) count FROM notifications n JOIN documents d ON d.id=n.document_id JOIN effective_members m ON m.workspace_id=d.workspace_id AND m.user_id=n.user_id WHERE n.user_id=? AND n.read_at IS NULL`,
+      `SELECT count(*) count FROM notifications n JOIN artifacts d ON d.id=n.artifact_id JOIN effective_members m ON m.workspace_id=d.workspace_id AND m.user_id=n.user_id WHERE n.user_id=? AND n.read_at IS NULL`,
       actor.user.id,
     )!.count;
     return { items, unreadCount: count };
@@ -2489,7 +2779,7 @@ export class Store {
       .refine((d) => !!d.id !== !!d.throughId)
       .parse(input);
     this.run(
-      `UPDATE notifications SET read_at=COALESCE(read_at,?) WHERE user_id=? AND ${data.id ? 'id=?' : 'id<=?'} AND document_id IN (SELECT d.id FROM documents d JOIN effective_members m ON m.workspace_id=d.workspace_id WHERE m.user_id=?)`,
+      `UPDATE notifications SET read_at=COALESCE(read_at,?) WHERE user_id=? AND ${data.id ? 'id=?' : 'id<=?'} AND artifact_id IN (SELECT d.id FROM artifacts d JOIN effective_members m ON m.workspace_id=d.workspace_id WHERE m.user_id=?)`,
       now(),
       actor.user.id,
       data.id ?? data.throughId!,

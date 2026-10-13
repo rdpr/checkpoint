@@ -72,7 +72,13 @@ export const initials = (name: string) =>
     .toUpperCase();
 export function download(name: string, body: string) {
   const url = URL.createObjectURL(
-    new Blob([body], { type: 'text/markdown;charset=utf-8' }),
+    new Blob([body], {
+      type: /\.html?$/i.test(name)
+        ? 'text/html;charset=utf-8'
+        : /\.mdx?$/i.test(name)
+          ? 'text/markdown;charset=utf-8'
+          : 'text/plain;charset=utf-8',
+    }),
   );
   const a = document.createElement('a');
   a.href = url;
@@ -80,3 +86,24 @@ export function download(name: string, body: string) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+export function artifactLabel(path: string) {
+  const name = (path.split('/').pop() ?? path)
+    .replace(/\.md$/i, '')
+    .replace(/[-_]+/g, ' ');
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+export function relativeDate(date: string) {
+  const seconds = Math.max(0, (Date.now() - new Date(date).getTime()) / 1000);
+  if (seconds < 60) return 'Just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} hr ago`;
+  if (seconds < 604800) return `${Math.floor(seconds / 86400)} days ago`;
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+  }).format(new Date(date));
+}
+
+export const artifactLocation = (path: string) =>
+  [...path.split('/').slice(0, -1), artifactLabel(path)].join(' › ');

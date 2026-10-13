@@ -4,8 +4,8 @@
 @layer workspace-base {
   :root {
     font-family: 'Inter Variable', Inter, sans-serif;
-    color: #28342f;
-    background: #fafbf8;
+    color: var(--cp-text);
+    background: var(--cp-bg);
     font-synthesis: none;
   }
   * {
@@ -37,7 +37,7 @@
     -webkit-tap-highlight-color: transparent;
   }
   :focus-visible {
-    outline: 2px solid #639377;
+    outline: 2px solid var(--cp-accent);
     outline-offset: 3px;
   }
   h1,

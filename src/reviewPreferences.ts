@@ -5,6 +5,7 @@ import type { StorageBackend } from '@plannotator/ui/utils/storage';
 
 const preferencesSchema = z.object({
   layout: z.enum(['normal', 'wide', 'focus']).default('normal'),
+  panelVisible: z.boolean().default(true),
   reviewMode: z
     .enum(['selection', 'comment', 'redline', 'quickLabel'])
     .default('comment'),

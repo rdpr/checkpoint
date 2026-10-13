@@ -1,3 +1,4 @@
+import { legacyNames } from './legacy-schema.ts';
 // Exercise the exact container entrypoint with real processes, HTTP, and disposable SQLite.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -84,7 +85,7 @@ test(
       await ready('/readyz', 200);
       const store = new Store(join(directory, 'workspaces.sqlite'));
       const actor = { user: await store.login(input) };
-      const doc = store.createDocument(actor, {
+      const doc = store.createArtifact(actor, {
         workspaceId: store.workspaces(actor)[0].id,
         path: 'preserved.md',
         body: '# Before backup',
@@ -105,8 +106,8 @@ test(
         /writer is running/,
       );
       const edited = new Store(join(directory, 'workspaces.sqlite'));
-      edited.updateDocument(actor, {
-        documentId: doc.id,
+      edited.updateArtifact(actor, {
+        artifactId: doc.id,
         body: '# After backup',
         expectedRevisionId: doc.currentRevisionId,
       });
@@ -117,7 +118,7 @@ test(
       await ready('/readyz', 200);
       const restored = new Store(join(directory, 'workspaces.sqlite'));
       assert.equal(
-        restored.document(actor, doc.id).revision.body,
+        restored.artifact(actor, doc.id).revision.body,
         '# Before backup',
       );
       restored.close();
@@ -151,17 +152,18 @@ test(
       password: 'upgrade-test-password',
     });
     const actor = { user };
-    const doc = store.createDocument(actor, {
+    const doc = store.createArtifact(actor, {
       workspaceId: store.workspaces(actor)[0].id,
       path: 'upgrade.md',
       body: '# Preserve this review',
     });
     store.review(actor, {
-      documentId: doc.id,
+      artifactId: doc.id,
       expectedRevisionId: doc.currentRevisionId,
       decision: 'approved',
       note: 'Keep the approval history.',
     });
+    legacyNames(store.db);
     // Schema 10 predates persistent link bindings and review-outcome notifications.
     store.db.exec(`DROP TABLE revision_links; DROP TABLE document_paths;
     ALTER TABLE notifications RENAME TO notifications_new;
@@ -211,11 +213,11 @@ test(
       child = undefined;
       const upgraded = new Store(database);
       assert.equal(
-        upgraded.document(actor, doc.id).revision.body,
+        upgraded.artifact(actor, doc.id).revision.body,
         doc.revision.body,
       );
       assert.equal(
-        upgraded.document(actor, doc.id).reviews[0].note,
+        upgraded.artifact(actor, doc.id).reviews[0].note,
         'Keep the approval history.',
       );
       assert.ok(

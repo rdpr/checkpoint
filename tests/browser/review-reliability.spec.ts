@@ -1,3 +1,5 @@
+import { authenticate } from './controls';
+import { choose } from './controls';
 import { test, expect, type APIRequestContext } from '@playwright/test';
 
 const origin = 'http://127.0.0.1:4411';
@@ -12,7 +14,7 @@ async function send(
   data: unknown,
   method = 'POST',
 ) {
-  const response = await request.fetch(`/api${path}`, {
+  const response = path.startsWith('/auth/') ? await authenticate(request, path, data) : await request.fetch(`/api${path}`, {
     method,
     headers: { Origin: origin },
     data,
@@ -28,7 +30,7 @@ async function setup(request: APIRequestContext, name: string) {
     credentials,
   );
   const workspace = await send(request, '/workspaces', { name });
-  const doc = await send(request, '/documents', {
+  const doc = await send(request, '/artifacts', {
     workspaceId: workspace.id,
     path: 'plan.md',
     body: '# Reliability\n\nKeep this passage attached.',
@@ -37,7 +39,7 @@ async function setup(request: APIRequestContext, name: string) {
     user,
     workspace,
     doc,
-    url: `/?workspace=${workspace.id}&document=${doc.id}`,
+    url: `/?workspace=${workspace.id}&artifact=${doc.id}`,
   };
 }
 
@@ -51,11 +53,13 @@ test('failed and unconfirmed comment saves survive reload and retry once on thei
   try {
     await send(other.request, '/auth/login', credentials);
     await page.goto(url);
-    const tools = page.getByRole('region', { name: 'Review tools' });
+    const tools = page.locator(
+      '[data-viewer-annotation-controls], .annotation-controls[aria-label="Review tools"]',
+    );
     await tools.getByRole('button', { name: 'Pinpoint', exact: true }).click();
     await tools.getByRole('button', { name: 'Markup', exact: true }).click();
     await page
-      .locator('.document-surface')
+      .locator('.artifact-surface')
       .getByText('Keep this passage attached.', { exact: true })
       .click();
     await page
@@ -72,11 +76,11 @@ test('failed and unconfirmed comment saves survive reload and retry once on thei
     await page.locator('input[type="file"]').setInputFiles({
       name: 'evidence.png',
       mimeType: 'image/png',
-      buffer: await page.locator('.document-surface').screenshot(),
+      buffer: await page.locator('.artifact-surface').screenshot(),
     });
     await page.getByTitle('Save (Esc)', { exact: true }).click();
     await expect(page.locator('[data-comment-popover] img')).toBeVisible();
-    const endpoint = `**/api/documents/${doc.id}/comments`;
+    const endpoint = `**/api/artifacts/${doc.id}/comments`;
     // Fault injection only: all successful writes still go to the real service and SQLite.
     await page.route(endpoint, (route) =>
       route.request().method() === 'POST'
@@ -100,14 +104,14 @@ test('failed and unconfirmed comment saves survive reload and retry once on thei
     });
     await send(
       other.request,
-      `/documents/${doc.id}`,
+      `/artifacts/${doc.id}`,
       {
         expectedRevisionId: doc.currentRevisionId,
         body: '# Reliability\n\nA different passage now.',
       },
       'PUT',
     );
-    await expect(page.locator('.document-surface')).toContainText(
+    await expect(page.locator('.artifact-surface')).toContainText(
       'A different passage now.',
       { timeout: 12000 },
     );
@@ -129,7 +133,7 @@ test('failed and unconfirmed comment saves survive reload and retry once on thei
     await recovery.getByRole('button', { name: 'Retry comment save' }).click();
     await expect(recovery).toHaveCount(0);
     const comments = await (
-      await page.request.get(`/api/documents/${doc.id}/comments`)
+      await page.request.get(`/api/artifacts/${doc.id}/comments`)
     ).json();
     expect(comments).toHaveLength(1);
     expect(comments[0]).toMatchObject({
@@ -171,7 +175,7 @@ test('failed and unconfirmed comment saves survive reload and retry once on thei
     await recovery.getByRole('button', { name: 'Retry comment save' }).click();
     await expect(recovery).toHaveCount(0);
     const final = await (
-      await page.request.get(`/api/documents/${doc.id}/comments`)
+      await page.request.get(`/api/artifacts/${doc.id}/comments`)
     ).json();
     expect(final).toHaveLength(2);
     expect(
@@ -199,23 +203,30 @@ test('review notes survive navigation and stale revisions, and a repeat round re
     await send(other.request, '/auth/login', credentials);
     await page.goto(url);
     await page
-      .getByRole('button', { name: 'Review this revision', exact: true })
+      .getByRole('button', { name: 'Finish review', exact: true })
       .click();
     await page
       .getByLabel('Review note (optional)')
       .fill('Retain this decision note.');
+    await page.getByRole('button', { name: 'Keep draft for later' }).click();
     await page.getByRole('button', { name: 'My reviews', exact: true }).click();
     await page.goto(url);
+    await page
+      .getByRole('button', { name: 'Resume review draft', exact: true })
+      .click();
     await expect(page.getByLabel('Review note (optional)')).toHaveValue(
       'Retain this decision note.',
     );
     await page.reload();
+    await page
+      .getByRole('button', { name: 'Resume review draft', exact: true })
+      .click();
     await expect(page.getByLabel('Review note (optional)')).toHaveValue(
       'Retain this decision note.',
     );
     const next = await send(
       other.request,
-      `/documents/${doc.id}`,
+      `/artifacts/${doc.id}`,
       {
         expectedRevisionId: doc.currentRevisionId,
         body: doc.revision.body + '\n\nInspect the new changes.',
@@ -226,6 +237,9 @@ test('review notes survive navigation and stale revisions, and a repeat round re
       page.getByRole('button', { name: 'Approve', exact: true }),
     ).toBeDisabled({ timeout: 12000 });
     await page.reload();
+    await page
+      .getByRole('button', { name: 'Resume review draft', exact: true })
+      .click();
     await expect(page.getByLabel('Review note (optional)')).toHaveValue(
       'Retain this decision note.',
     );
@@ -234,7 +248,7 @@ test('review notes survive navigation and stale revisions, and a repeat round re
       .click();
     await page.getByRole('button', { name: 'Approve', exact: true }).click();
     const review = page.getByRole('region', {
-      name: 'Document review',
+      name: 'Artifact review',
       exact: true,
     });
     await expect(review).toContainText('Approved');
@@ -243,7 +257,7 @@ test('review notes survive navigation and stale revisions, and a repeat round re
     await expect(page.getByLabel('Review note (optional)')).toHaveCount(0);
     const round = await send(
       other.request,
-      `/documents/${doc.id}/review-requests`,
+      `/artifacts/${doc.id}/review-requests`,
       {
         expectedRevisionId: next.currentRevisionId,
         reviewerId: user.id,
@@ -265,8 +279,10 @@ test('review notes survive navigation and stale revisions, and a repeat round re
       'This round is complete: Alex Morgan approved.',
     );
     await page.goto(`/?workspace=${workspace.id}&view=reviews`);
-    await page.getByLabel('Filter workspace').selectOption(workspace.id);
-    await expect(page.getByText('No reviews waiting on you.')).toBeVisible();
+    await choose(page.getByLabel('Filter workspace'), workspace.name);
+    await expect(
+      page.getByText('No review requests match this workspace filter.'),
+    ).toBeVisible();
     const saved = await (
       await page.request.get(`/api/review-requests/${round.id}`)
     ).json();
@@ -288,7 +304,7 @@ test('review notes survive navigation and stale revisions, and a repeat round re
     const serverSaved = new Promise<void>((resolve) => {
       committed = resolve;
     });
-    const reviewEndpoint = `**/api/documents/${doc.id}/reviews`;
+    const reviewEndpoint = `**/api/artifacts/${doc.id}/reviews`;
     await page.route(reviewEndpoint, async (route) => {
       const response = await route.fetch();
       committed();
@@ -297,21 +313,30 @@ test('review notes survive navigation and stale revisions, and a repeat round re
     });
     await page.getByRole('button', { name: 'Approve', exact: true }).click();
     await serverSaved;
+    await page
+      .getByRole('button', { name: 'Close dialog', exact: true })
+      .click();
     await page.getByRole('button', { name: 'My reviews', exact: true }).click();
     await page
-      .getByRole('navigation', { name: 'Workspace documents' })
+      .getByRole('navigation', { name: 'Workspace artifacts' })
       .getByRole('button', { name: 'plan.md', exact: true })
+      .click();
+    await page
+      .getByRole('button', { name: 'Resume review draft', exact: true })
       .click();
     await page
       .getByLabel('Review note (optional)')
       .fill('New work after navigating back.');
     const finished = page.waitForResponse((response) =>
-      response.url().endsWith(`/documents/${doc.id}/reviews`),
+      response.url().endsWith(`/artifacts/${doc.id}/reviews`),
     );
     release();
     await finished;
     await page.unroute(reviewEndpoint);
     await page.reload();
+    await page
+      .getByRole('button', { name: 'Resume review draft', exact: true })
+      .click();
     await expect(page.getByLabel('Review note (optional)')).toHaveValue(
       'New work after navigating back.',
     );

@@ -1,4 +1,7 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { navigate } from './navigation';
+import { useConfirm } from './Confirm';
+import { Select } from './Select';
+import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react';
 import type {
   AuditEntry,
   Member,
@@ -7,7 +10,7 @@ import type {
   User,
 } from '../shared/types';
 import { api, post, errorText, dateLabel } from './api';
-import { ErrorMessage, Loading, Modal } from './ui';
+import { ErrorMessage, Loading, SettingsPage } from './ui';
 
 type Change = (
   path: string,
@@ -36,6 +39,7 @@ export function WorkspaceMembership({
   busy: boolean;
   change: Change;
 }) {
+  const confirm = useConfirm();
   const owners = members.filter((m) => m.directRole === 'owner');
   const base = `/workspaces/${workspaceId}`;
   return (
@@ -44,50 +48,54 @@ export function WorkspaceMembership({
         The highest role from direct membership and teams applies. Removing
         direct access keeps any access granted by a team.
       </p>
-      {members.map((m) => (
-        <div className="administration-card" key={m.id}>
-          <strong>
-            {m.name}
-            {m.id === user.id ? ' (you)' : ''}
-          </strong>{' '}
-          <span className="pill">{m.role}</span>
-          <small className="muted">{m.email}</small>
-          {m.teams.length > 0 && (
-            <p className="small">
-              Via {m.teams.map((t) => `${t.name} (${t.role})`).join(', ')}
-            </p>
-          )}
-          <form
-            className="inline-form"
-            onSubmit={(e) => {
-              const data = formData(e);
-              void change(`${base}/membership`, {
-                userId: m.id,
-                role: data.get('role') || null,
-              });
-            }}
-          >
-            <label>
-              Direct role for {m.name}
-              <select
-                aria-label={`Direct role for ${m.name}`}
-                name="role"
-                defaultValue={m.directRole ?? ''}
-                key={m.directRole ?? ''}
-                disabled={busy}
-              >
-                <option value="">No direct access</option>
-                <option value="viewer">Viewer</option>
-                <option value="editor">Editor</option>
-                <option value="owner">Owner</option>
-              </select>
-            </label>
-            <button className="button" disabled={busy}>
-              Save role
-            </button>
-          </form>
-        </div>
-      ))}
+      <div className="member-admin-list">
+        {members.map((m) => (
+          <div className="administration-card member-admin-row" key={m.id}>
+            <div className="member-identity">
+              <strong>
+                {m.name}
+                {m.id === user.id ? ' (you)' : ''}
+              </strong>{' '}
+              <span className="pill">{m.role}</span>
+              <small className="muted">{m.email}</small>
+              {m.teams.length > 0 && (
+                <p className="small">
+                  Via {m.teams.map((t) => `${t.name} (${t.role})`).join(', ')}
+                </p>
+              )}
+            </div>
+            <form
+              className="inline-form"
+              onSubmit={(e) => {
+                const data = formData(e);
+                void change(`${base}/membership`, {
+                  userId: m.id,
+                  role: data.get('role') || null,
+                });
+              }}
+            >
+              <label>
+                <span className="sr-only">Direct role for {m.name}</span>
+                <Select
+                  aria-label={`Direct role for ${m.name}`}
+                  name="role"
+                  defaultValue={m.directRole ?? ''}
+                  key={m.directRole ?? ''}
+                  disabled={busy}
+                >
+                  <option value="">No direct access</option>
+                  <option value="viewer">Viewer</option>
+                  <option value="editor">Editor</option>
+                  <option value="owner">Owner</option>
+                </Select>
+              </label>
+              <button className="button" disabled={busy}>
+                Save role
+              </button>
+            </form>
+          </div>
+        ))}
+      </div>
       {isAdmin && (
         <form
           className="inline-form"
@@ -101,7 +109,8 @@ export function WorkspaceMembership({
         >
           <label>
             Add organization member
-            <select
+            <Select
+              searchable
               aria-label="Add organization member"
               name="userId"
               required
@@ -117,70 +126,78 @@ export function WorkspaceMembership({
                     {p.name} · {p.email}
                   </option>
                 ))}
-            </select>
+            </Select>
           </label>
           <label>
             Role
-            <select name="role">
+            <Select name="role">
               <option value="editor">Editor</option>
               <option value="viewer">Viewer</option>
               <option value="owner">Owner</option>
-            </select>
+            </Select>
           </label>
           <button className="button" disabled={busy}>
             Add member
           </button>
         </form>
       )}
-      <h3>Transfer ownership</h3>
-      <p className="small muted">
-        The successor becomes an owner. The previous owner keeps editor access.
-        Other owners stay in place.
-      </p>
-      <form
-        className="stack-form"
-        onSubmit={(e) => {
-          const data = formData(e);
-          if (
-            confirm(
-              'Transfer ownership? The previous owner will become an editor.',
+      <section className="settings-section ownership-section">
+        <h3>Transfer ownership</h3>
+        <p className="small muted">
+          The successor becomes an owner. The previous owner keeps editor
+          access. Other owners stay in place.
+        </p>
+        <form
+          className="stack-form"
+          onSubmit={async (e) => {
+            const data = formData(e);
+            if (
+              await confirm(
+                'Transfer ownership? The previous owner will become an editor.',
+              )
             )
-          )
-            void change(`${base}/ownership`, {
-              fromUserId: data.get('from'),
-              toUserId: data.get('to'),
-            });
-        }}
-      >
-        <label>
-          Current owner
-          <select aria-label="Current owner" name="from" required>
-            {owners
-              .filter((p) => isAdmin || p.id === user.id)
-              .map((p) => (
+              void change(`${base}/ownership`, {
+                fromUserId: data.get('from'),
+                toUserId: data.get('to'),
+              });
+          }}
+        >
+          <label>
+            Current owner
+            <Select searchable aria-label="Current owner" name="from" required>
+              {owners
+                .filter((p) => isAdmin || p.id === user.id)
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+            </Select>
+          </label>
+          <label>
+            New owner
+            <Select
+              searchable
+              aria-label="New owner"
+              name="to"
+              required
+              defaultValue=""
+            >
+              <option value="" disabled>
+                Choose a successor
+              </option>
+              {people.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.name}
+                  {p.name} · {p.email}
                 </option>
               ))}
-          </select>
-        </label>
-        <label>
-          New owner
-          <select aria-label="New owner" name="to" required defaultValue="">
-            <option value="" disabled>
-              Choose a successor
-            </option>
-            {people.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} · {p.email}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="button" disabled={busy}>
-          Transfer ownership
-        </button>
-      </form>
+            </Select>
+          </label>
+          <button className="button" disabled={busy}>
+            Transfer ownership
+          </button>
+        </form>
+      </section>
     </div>
   );
 }
@@ -194,13 +211,46 @@ export function OrganizationSettings({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const confirm = useConfirm();
   const [data, setData] = useState<OrganizationAdmin | null>(null);
-  const [tab, setTab] = useState('People');
+  const sections = ['People', 'Teams', 'Workspaces', 'Agent keys', 'Audit log'];
+  const readSection = () => {
+    const value = new URLSearchParams(location.search).get('section');
+    return value && sections.includes(value) ? value : 'People';
+  };
+  const [tab, selectTab] = useState(readSection);
+  useEffect(() => {
+    const read = () => selectTab(readSection());
+    window.addEventListener('popstate', read);
+    window.addEventListener('pw:navigate', read);
+    return () => {
+      window.removeEventListener('popstate', read);
+      window.removeEventListener('pw:navigate', read);
+    };
+  }, []);
+  const setTab = (tab: string) => {
+    const url = new URL(location.href);
+    url.searchParams.set('section', tab);
+    navigate(url);
+  };
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [team, setTeam] = useState<Team | 'new' | null>(null);
   const [workspaceId, setWorkspaceId] = useState('');
   const [offboardId, setOffboardId] = useState<string | null>(null);
+  const teamForm = useRef<HTMLFormElement>(null);
+  const offboardForm = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (!team) return;
+    teamForm.current?.scrollIntoView({ block: 'start' });
+    teamForm.current?.querySelector('input')?.focus({ preventScroll: true });
+  }, [team]);
+  useEffect(() => {
+    if (!offboardId) return;
+    offboardForm.current?.scrollIntoView({ block: 'start' });
+    offboardForm.current?.querySelector('h3')?.focus({ preventScroll: true });
+  }, [offboardId]);
+  const [expandedAudit, setExpandedAudit] = useState<number | null>(null);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [cursor, setCursor] = useState<number | null>(null);
   async function loadAudit(before?: number) {
@@ -274,11 +324,10 @@ export function OrganizationSettings({
     scope: 'Access',
   };
   return (
-    <Modal title="Organization" onClose={onClose}>
+    <SettingsPage title="Organization" onClose={onClose}>
       <div className="organization-settings">
         <p className="muted">
-          {data?.name ?? 'Organization administration'} · Manage people, teams,
-          and access.
+          {data?.name ?? 'Organization administration'}
         </p>
         <div
           className="administration-tabs"
@@ -338,90 +387,100 @@ export function OrganizationSettings({
                   </button>
                 </form>
                 <p className="small muted">
-                  Invite new people from a workspace’s Members dialog.
-                  Administrators manage access across the organization; document
+                  Open Members from your account menu to invite people to a workspace.
+                  Administrators manage access across the organization; artifact
                   access still requires workspace membership.
                 </p>
-                {data.people.map((p) => (
-                  <div className="administration-card" key={p.id}>
-                    <strong>
-                      {p.name}
-                      {p.id === user.id ? ' (you)' : ''}
-                    </strong>
-                    <small className="muted">{p.email}</small>
-                    {p.disabledAt ? (
-                      <>
-                        <p className="small">
-                          Offboarded {dateLabel(p.disabledAt)}. History
-                          retained.
-                        </p>
-                        <button
-                          className="button"
-                          disabled={busy}
-                          onClick={() => {
-                            if (
-                              confirm(
-                                `Reactivate ${p.name}? Their previous memberships, sessions, and keys will stay revoked.`,
-                              )
-                            )
-                              void change(
-                                `/organization/people/${p.id}/reactivate`,
-                                {},
-                              );
-                          }}
-                        >
-                          Reactivate account
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <form
-                          className="inline-form"
-                          onSubmit={(e) => {
-                            const form = formData(e);
-                            void change(`/organization/people/${p.id}/role`, {
-                              role: form.get('role'),
-                            });
-                          }}
-                        >
-                          <label>
-                            Organization role for {p.name}
-                            <select
-                              aria-label={`Organization role for ${p.name}`}
-                              name="role"
-                              defaultValue={p.orgRole}
-                              key={p.orgRole}
-                            >
-                              <option value="member">Member</option>
-                              <option value="admin">Administrator</option>
-                            </select>
-                          </label>
-                          <button className="button" disabled={busy}>
-                            Save organization role
-                          </button>
-                        </form>
-                        {p.id !== user.id && (
+                <div className="member-admin-list">
+                  {data.people.map((p) => (
+                    <div
+                      className="administration-card member-admin-row organization-person"
+                      key={p.id}
+                    >
+                      <div className="member-identity">
+                        <strong>
+                          {p.name}
+                          {p.id === user.id ? ' (you)' : ''}
+                        </strong>
+                        <small className="muted">{p.email}</small>
+                      </div>
+                      {p.disabledAt ? (
+                        <>
+                          <p className="small">
+                            Offboarded {dateLabel(p.disabledAt)}. History
+                            retained.
+                          </p>
                           <button
-                            className="text-button danger"
+                            className="button"
                             disabled={busy}
-                            onClick={() => setOffboardId(p.id)}
+                            onClick={async () => {
+                              if (
+                                await confirm(
+                                  `Reactivate ${p.name}? Their previous memberships, sessions, and keys will stay revoked.`,
+                                )
+                              )
+                                void change(
+                                  `/organization/people/${p.id}/reactivate`,
+                                  {},
+                                );
+                            }}
                           >
-                            Offboard {p.name}
+                            Reactivate account
                           </button>
-                        )}
-                      </>
-                    )}
-                  </div>
-                ))}
+                        </>
+                      ) : (
+                        <>
+                          <form
+                            className="inline-form"
+                            onSubmit={(e) => {
+                              const form = formData(e);
+                              void change(`/organization/people/${p.id}/role`, {
+                                role: form.get('role'),
+                              });
+                            }}
+                          >
+                            <label>
+                              <span className="sr-only">
+                                Organization role for {p.name}
+                              </span>
+                              <Select
+                                aria-label={`Organization role for ${p.name}`}
+                                name="role"
+                                defaultValue={p.orgRole}
+                                key={p.orgRole}
+                              >
+                                <option value="member">Member</option>
+                                <option value="admin">Administrator</option>
+                              </Select>
+                            </label>
+                            <button className="button" disabled={busy}>
+                              Save organization role
+                            </button>
+                          </form>
+                          {p.id !== user.id && (
+                            <button
+                              className="text-button danger"
+                              disabled={busy}
+                              onClick={() => setOffboardId(p.id)}
+                            >
+                              Offboard {p.name}
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
                 {person && (
                   <form
                     className="administration-card stack-form"
                     aria-label={`Offboard ${person.name}`}
-                    onSubmit={(e) => {
+                    ref={offboardForm}
+                    onSubmit={async (e) => {
                       const form = formData(e);
                       const successorId = form.get('successor') as string;
                       if (
-                        confirm(
+                        await confirm(
                           `Offboard ${person.name}? This revokes all sessions, agent keys, issued invitations, and memberships.`,
                         )
                       )
@@ -433,11 +492,11 @@ export function OrganizationSettings({
                         });
                     }}
                   >
-                    <h3>Offboard {person.name}</h3>
+                    <h3 tabIndex={-1}>Offboard {person.name}</h3>
                     <p>
                       Sign this person out everywhere, revoke their agent keys
                       and invitations, and remove direct and team access.
-                      Documents, discussions, and review history remain.
+                      Artifacts, discussions, and review history remain.
                     </p>
                     <p className="small">
                       Solely owned workspaces:{' '}
@@ -456,7 +515,8 @@ export function OrganizationSettings({
                     </p>
                     <label>
                       Successor for owned workspaces
-                      <select
+                      <Select
+                        searchable
                         aria-label="Successor for owned workspaces"
                         name="successor"
                         defaultValue=""
@@ -471,7 +531,7 @@ export function OrganizationSettings({
                               {p.name} · {p.email}
                             </option>
                           ))}
-                      </select>
+                      </Select>
                     </label>
                     <div className="modal-actions">
                       <button
@@ -495,6 +555,12 @@ export function OrganizationSettings({
                   Teams grant editor or viewer access to selected workspaces.
                   The highest grant applies alongside direct membership.
                 </p>
+                {!data.teams.length && (
+                  <p className="list-empty">
+                    No teams yet. Create a team to manage shared workspace
+                    access.
+                  </p>
+                )}
                 {data.teams.map((t) => (
                   <div className="access-row" key={t.id}>
                     <div>
@@ -510,9 +576,9 @@ export function OrganizationSettings({
                     <button
                       className="text-button danger"
                       disabled={busy}
-                      onClick={() => {
+                      onClick={async () => {
                         if (
-                          confirm(
+                          await confirm(
                             `Delete ${t.name}? Access granted through this team will be removed.`,
                           )
                         )
@@ -535,6 +601,7 @@ export function OrganizationSettings({
                 {team && (
                   <form
                     key={team === 'new' ? 'new' : team.id}
+                    ref={teamForm}
                     className="administration-card stack-form"
                     onSubmit={(e) => {
                       const form = formData(e);
@@ -584,7 +651,7 @@ export function OrganizationSettings({
                       {data.workspaces.map((w) => (
                         <label key={w.id}>
                           Team access to {w.name}
-                          <select
+                          <Select
                             aria-label={`Team access to ${w.name}`}
                             name={`workspace:${w.id}`}
                             defaultValue={
@@ -598,7 +665,7 @@ export function OrganizationSettings({
                             <option value="">No access</option>
                             <option value="viewer">Viewer</option>
                             <option value="editor">Editor</option>
-                          </select>
+                          </Select>
                         </label>
                       ))}
                     </fieldset>
@@ -622,7 +689,8 @@ export function OrganizationSettings({
               <>
                 <label>
                   Manage workspace
-                  <select
+                  <Select
+                    searchable
                     aria-label="Manage workspace"
                     value={workspaceId}
                     onChange={(e) => setWorkspaceId(e.target.value)}
@@ -633,7 +701,7 @@ export function OrganizationSettings({
                         {w.name}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
                 {workspace && (
                   <WorkspaceMembership
@@ -654,7 +722,9 @@ export function OrganizationSettings({
                   Active personal and service account keys across the
                   organization. Secret values are never displayed here.
                 </p>
-                {data.credentials.length === 0 && <p>No active agent keys.</p>}
+                {data.credentials.length === 0 && (
+                  <p className="list-empty">No active agent keys.</p>
+                )}
                 {data.credentials.map((t) => (
                   <div className="access-row" key={t.id}>
                     <div>
@@ -672,8 +742,10 @@ export function OrganizationSettings({
                     <button
                       className="text-button danger"
                       disabled={busy}
-                      onClick={() => {
-                        if (confirm(`Revoke ${t.name} for ${t.userName}?`))
+                      onClick={async () => {
+                        if (
+                          await confirm(`Revoke ${t.name} for ${t.userName}?`)
+                        )
                           void change(
                             `/organization/credentials/${t.id}/revoke`,
                             {},
@@ -690,32 +762,94 @@ export function OrganizationSettings({
               <>
                 <p className="small muted">
                   Access, account, team, and credential changes, newest first.
-                  Document and review history stays with each document.
+                  Artifact and review history stays with each artifact.
                 </p>
-                {audit.map((entry) => (
-                  <div className="administration-card" key={entry.id}>
-                    <strong>
-                      {entry.action.replaceAll('.', ' · ').replaceAll('_', ' ')}
-                    </strong>
-                    <p>{describe(entry.target)}</p>
-                    <small className="muted">
-                      {entry.actorName} · {dateLabel(entry.createdAt)}
-                    </small>
-                    {Object.keys(entry.details).length > 0 && (
-                      <details>
-                        <summary>Change details</summary>
-                        <dl>
-                          {Object.entries(entry.details).map(([key, value]) => (
-                            <div key={key}>
-                              <dt>{detailLabels[key] ?? key}</dt>
-                              <dd>{describe(value)}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                      </details>
-                    )}
-                  </div>
-                ))}
+                <div
+                  className="table-scroll"
+                  role="region"
+                  aria-label="Audit log entries"
+                  tabIndex={0}
+                >
+                  <table className="data-table audit-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Event</th>
+                        <th scope="col">Target</th>
+                        <th scope="col">Changed by</th>
+                        <th scope="col">When</th>
+                        <th scope="col">
+                          <span className="sr-only">Details</span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {audit.map((entry) => (
+                        <Fragment key={entry.id}>
+                          <tr>
+                            <td>
+                              <strong>
+                                {entry.action
+                                  .replaceAll('.', ' · ')
+                                  .replaceAll('_', ' ')}
+                              </strong>
+                            </td>
+                            <td>{describe(entry.target)}</td>
+                            <td>{entry.actorName}</td>
+                            <td>
+                              <time>{dateLabel(entry.createdAt)}</time>
+                            </td>
+                            <td>
+                              {Object.keys(entry.details).length > 0 && (
+                                <button
+                                  className="text-button"
+                                  aria-expanded={expandedAudit === entry.id}
+                                  aria-controls={`audit-details-${entry.id}`}
+                                  onClick={() =>
+                                    setExpandedAudit(
+                                      expandedAudit === entry.id
+                                        ? null
+                                        : entry.id,
+                                    )
+                                  }
+                                >
+                                  {expandedAudit === entry.id
+                                    ? 'Hide details'
+                                    : 'Change details'}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                          {expandedAudit === entry.id && (
+                            <tr
+                              id={`audit-details-${entry.id}`}
+                              className="audit-details"
+                            >
+                              <td colSpan={5}>
+                                <dl>
+                                  {Object.entries(entry.details).map(
+                                    ([key, value]) => (
+                                      <div key={key}>
+                                        <dt>{detailLabels[key] ?? key}</dt>
+                                        <dd>{describe(value)}</dd>
+                                      </div>
+                                    ),
+                                  )}
+                                </dl>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      ))}
+                      {!audit.length && (
+                        <tr>
+                          <td colSpan={5} className="muted">
+                            No administrative changes yet.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
                 {cursor !== null && (
                   <button
                     className="button"
@@ -739,6 +873,6 @@ export function OrganizationSettings({
           </div>
         )}
       </div>
-    </Modal>
+    </SettingsPage>
   );
 }

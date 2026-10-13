@@ -127,7 +127,17 @@ if (command === 'package') {
       2,
     ) + '\n',
   );
-  const notes = changelog.split(`## ${version}`)[1].split('\n## ')[0].trim();
+  const notes = changelog
+    .split(`## ${version}`)[1]
+    .split('\n## ')[0]
+    .split('\n')
+    .slice(1) // The heading may include a release date.
+    .join('\n')
+    .trim()
+    .replace(
+      /\]\((docs\/[^)]+)\)/g,
+      `](https://github.com/rdpr/checkpoint/blob/v${version}/$1)`,
+    );
   writeFileSync(
     'release/RELEASE_NOTES.md',
     notes +

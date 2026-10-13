@@ -1,3 +1,4 @@
+import { legacyRoutes } from './compatibility.ts';
 import { version } from '../shared/version.ts';
 import express, {
   type Request,
@@ -13,6 +14,7 @@ import { z } from 'zod';
 import { Store, type Actor } from './store.ts';
 import { AppError, requireThat, secret, digest } from './security.ts';
 import { handleMcp } from './mcp.ts';
+import { authenticationLimiter, trustedProxyAddresses } from './authLimits.ts';
 
 export interface AppOptions {
   origins: string[];
@@ -26,6 +28,7 @@ export interface AppOptions {
   allowSetup?: boolean;
   release?: string;
   maintenanceFile?: string;
+  trustedProxies?: string[];
 }
 const sessionCookie = (req: Request) =>
   req.headers.cookie
@@ -37,6 +40,7 @@ const sessionCookie = (req: Request) =>
 export function createApp(store: Store, options: AppOptions) {
   const app = express();
   app.disable('x-powered-by');
+  app.set('trust proxy', trustedProxyAddresses(options.trustedProxies ?? []));
   const metrics = options.metricsToken
     ? monitoring(store, options.dataDir, options.operationsFile)
     : undefined;
@@ -107,24 +111,17 @@ export function createApp(store: Store, options: AppOptions) {
     next();
   });
   app.use(express.json({ limit: '2mb' }));
-  // Bounded per-address authentication attempts. Do not trust forwarded IP headers.
-  const attempts = new Map<string, { count: number; until: number }>();
-  app.use('/api/auth', (req, res, next) => {
-    if (req.method !== 'POST') return next();
-    const time = Date.now();
-    for (const [key, value] of attempts)
-      if (value.until < time) attempts.delete(key);
-    const key = req.socket.remoteAddress ?? 'unknown',
-      entry = attempts.get(key) ?? { count: 0, until: time + 60_000 };
-    if (entry.count >= 20 || attempts.size >= 10_000)
-      return res.status(429).set('Retry-After', '60').json({
-        code: 'rate_limited',
-        message: 'Too many attempts. Try again in a minute.',
-      });
-    entry.count++;
-    attempts.set(key, entry);
-    next();
-  });
+  app.use(legacyRoutes);
+  // Mount on the same routes as the handlers, including Express's case/slash rules.
+  app.post(
+    [
+      '/api/auth/setup',
+      '/api/auth/login',
+      '/api/auth/register',
+      '/api/auth/entra/start',
+    ],
+    authenticationLimiter(),
+  );
   const signIn = (
     res: Response,
     user: Parameters<Store['session']>[0],
@@ -143,7 +140,7 @@ export function createApp(store: Store, options: AppOptions) {
   app.get('/livez', (_req, res) => res.json({ ok: true }));
   app.get('/readyz', (_req, res) => {
     try {
-      store.db.prepare('SELECT id FROM documents LIMIT 1').get();
+      store.db.prepare('SELECT id FROM artifacts LIMIT 1').get();
       const ready =
         !store.needsSetup() &&
         !(options.maintenanceFile && existsSync(options.maintenanceFile));
@@ -168,7 +165,7 @@ export function createApp(store: Store, options: AppOptions) {
   });
   app.get('/api/health', (_req, res) => {
     try {
-      store.db.prepare('SELECT id FROM documents LIMIT 1').get();
+      store.db.prepare('SELECT id FROM artifacts LIMIT 1').get();
       res.json({
         ok: true,
         release: options.release ?? 'development',
@@ -370,6 +367,28 @@ export function createApp(store: Store, options: AppOptions) {
   );
   app.use('/api', authenticate);
   const actor = (res: Response) => res.locals.actor as Actor;
+  app.get('/api/workspaces/:wid/catalog', (req, res) =>
+    res.json(store.catalog(actor(res), req.params.wid)),
+  );
+  app.post('/api/workspaces/:wid/folders', (req, res) =>
+    res
+      .status(201)
+      .json(
+        store.createFolder(actor(res), {
+          ...req.body,
+          workspaceId: req.params.wid,
+        }),
+      ),
+  );
+  app.patch('/api/workspaces/:wid/folders/:fid', (req, res) =>
+    res.json(
+      store.changeFolder(actor(res), {
+        ...req.body,
+        workspaceId: req.params.wid,
+        folderId: req.params.fid,
+      }),
+    ),
+  );
   app.get('/api/search', (req, res) =>
     res.json(
       store.search(actor(res), {
@@ -388,11 +407,11 @@ export function createApp(store: Store, options: AppOptions) {
   app.post('/api/notifications/read', (req, res) =>
     res.json(store.readNotifications(actor(res), req.body)),
   );
-  app.patch('/api/documents/:did', (req, res) =>
+  app.patch('/api/artifacts/:did', (req, res) =>
     res.json(
-      store.changeDocument(actor(res), {
+      store.changeArtifact(actor(res), {
         ...req.body,
-        documentId: req.params.did,
+        artifactId: req.params.did,
       }),
     ),
   );
@@ -473,7 +492,7 @@ export function createApp(store: Store, options: AppOptions) {
     res.json(store.transferOwnership(actor(res), req.params.wid, req.body)),
   );
   app.post(
-    '/api/documents/:did/images',
+    '/api/artifacts/:did/images',
     express.raw({ type: 'application/octet-stream', limit: '5mb' }),
     (req, res) => {
       res
@@ -505,18 +524,18 @@ export function createApp(store: Store, options: AppOptions) {
   app.get('/api/workspaces/:wid/review-requests', (req, res) =>
     res.json(store.reviewRequests(actor(res), req.params.wid)),
   );
-  app.get('/api/documents/:did/review-requests', (req, res) => {
-    const doc = store.document(actor(res), req.params.did);
+  app.get('/api/artifacts/:did/review-requests', (req, res) => {
+    const doc = store.artifact(actor(res), req.params.did);
     res.json(store.reviewRequests(actor(res), doc.workspaceId, doc.id));
   });
   app.get('/api/review-requests/:rid', (req, res) =>
     res.json(store.reviewRequest(actor(res), req.params.rid)),
   );
-  app.post('/api/documents/:did/review-requests', (req, res) =>
+  app.post('/api/artifacts/:did/review-requests', (req, res) =>
     res.status(201).json(
       store.requestReview(actor(res), {
         ...req.body,
-        documentId: req.params.did,
+        artifactId: req.params.did,
       }),
     ),
   );
@@ -546,51 +565,51 @@ export function createApp(store: Store, options: AppOptions) {
         store.transaction(() => store.createWorkspace(actor(res), req.body)),
       ),
   );
-  app.get('/api/workspaces/:wid/documents', (req, res) =>
+  app.get('/api/workspaces/:wid/artifacts', (req, res) =>
     res.json(
-      store.documents(
+      store.artifacts(
         actor(res),
         req.params.wid,
         req.query.includeArchived === 'true',
       ),
     ),
   );
-  app.post('/api/documents', (req, res) =>
-    res.status(201).json(store.createDocument(actor(res), req.body)),
+  app.post('/api/artifacts', (req, res) =>
+    res.status(201).json(store.createArtifact(actor(res), req.body)),
   );
-  app.get('/api/documents/:did/resolve-link', (req, res) =>
+  app.get('/api/artifacts/:did/resolve-link', (req, res) =>
     res.json(store.resolveLink(actor(res), req.params.did, req.query)),
   );
-  app.get('/api/documents/:did', (req, res) =>
-    res.json(store.document(actor(res), req.params.did)),
+  app.get('/api/artifacts/:did', (req, res) =>
+    res.json(store.artifact(actor(res), req.params.did)),
   );
-  app.put('/api/documents/:did', (req, res) =>
+  app.put('/api/artifacts/:did', (req, res) =>
     res.json(
-      store.updateDocument(actor(res), {
+      store.updateArtifact(actor(res), {
         ...req.body,
-        documentId: req.params.did,
+        artifactId: req.params.did,
       }),
     ),
   );
-  app.get('/api/documents/:did/revisions', (req, res) =>
+  app.get('/api/artifacts/:did/revisions', (req, res) =>
     res.json(store.revisions(actor(res), req.params.did)),
   );
-  app.get('/api/documents/:did/revisions/:rid', (req, res) =>
+  app.get('/api/artifacts/:did/revisions/:rid', (req, res) =>
     res.json(store.revision(actor(res), req.params.did, req.params.rid)),
   );
-  app.post('/api/documents/:did/restore', (req, res) =>
+  app.post('/api/artifacts/:did/restore', (req, res) =>
     res.json(
-      store.restore(actor(res), { ...req.body, documentId: req.params.did }),
+      store.restore(actor(res), { ...req.body, artifactId: req.params.did }),
     ),
   );
-  app.post('/api/documents/:did/reviews', (req, res) =>
+  app.post('/api/artifacts/:did/reviews', (req, res) =>
     res
       .status(201)
       .json(
-        store.review(actor(res), { ...req.body, documentId: req.params.did }),
+        store.review(actor(res), { ...req.body, artifactId: req.params.did }),
       ),
   );
-  app.get('/api/documents/:did/revisions/:rid/feedback', (req, res) =>
+  app.get('/api/artifacts/:did/revisions/:rid/feedback', (req, res) =>
     res.json(store.feedback(actor(res), req.params.did, req.params.rid)),
   );
   app.post('/api/comments/:cid/reattach', (req, res) =>
@@ -617,14 +636,14 @@ export function createApp(store: Store, options: AppOptions) {
       }),
     ),
   );
-  app.get('/api/documents/:did/comments', (req, res) =>
+  app.get('/api/artifacts/:did/comments', (req, res) =>
     res.json(store.comments(actor(res), req.params.did)),
   );
-  app.post('/api/documents/:did/comments', (req, res) =>
+  app.post('/api/artifacts/:did/comments', async (req, res) =>
     res.status(201).json(
-      store.addComment(actor(res), {
+      await store.addComment(actor(res), {
         ...req.body,
-        documentId: req.params.did,
+        artifactId: req.params.did,
       }),
     ),
   );

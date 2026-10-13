@@ -1,9 +1,10 @@
 name: checkpoint
 x-app: &app
-  image: ${CHECKPOINT_IMAGE:-ghcr.io/rdpr/checkpoint:0.1.0}
+  image: ${CHECKPOINT_IMAGE:-ghcr.io/rdpr/checkpoint:0.3.0}
   environment: &environment
     APP_ORIGIN: ${APP_ORIGIN:?Set the public HTTPS origin}
     AUTH_MODE: ${AUTH_MODE:-optional}
+    TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
     ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:-}
     ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:-}
     ENTRA_CLIENT_SECRET_FILE: /run/secrets/entra_client_secret

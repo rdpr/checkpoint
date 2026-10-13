@@ -1,8 +1,9 @@
+import { useConfirm } from './Confirm';
 import { useState } from 'react';
 import { savedDrafts } from './drafts';
 import { api, dateLabel, download, errorText } from './api';
-import type { Document, User } from '../shared/types';
-import { Modal, ErrorMessage } from './ui';
+import type { Artifact, User } from '../shared/types';
+import { SettingsPage, ErrorMessage } from './ui';
 export function Drafts({
   user,
   onClose,
@@ -10,8 +11,9 @@ export function Drafts({
 }: {
   user: User;
   onClose: () => void;
-  onOpen: (workspaceId: string, documentId: string, commentId?: string) => void;
+  onOpen: (workspaceId: string, artifactId: string, commentId?: string) => void;
 }) {
+  const confirm = useConfirm();
   const [items, setItems] = useState(() => {
     try {
       return savedDrafts(user.id);
@@ -21,29 +23,29 @@ export function Drafts({
   });
   const [error, setError] = useState<string | null>(null);
   const names: Record<string, string> = {
-    'pw-draft': 'Document',
+    'pw-draft': 'Artifact',
     'pw-comment-drafts': 'Unsent comments',
     'pw-review-draft': 'Review',
     'pw-request-draft': 'Review request',
     'pw-reply-draft': 'Reply',
     'pw-annotation-draft': 'Annotation edit',
     'pw-popover-draft': 'Selection comment',
-    'pw-discussion-draft': 'Document discussion',
+    'pw-discussion-draft': 'Artifact discussion',
   };
   return (
-    <Modal title="Saved drafts" onClose={onClose}>
+    <SettingsPage title="Saved drafts" onClose={onClose}>
       <p className="muted">
-        Saved in this browser for {user.name}. Drafts survive closing tabs, but
-        do not sync to other devices. Concurrent drafts are kept separately.
+        Drafts are saved in this browser, not synced to other devices.
       </p>
       <ErrorMessage message={error} />
-      <div className="search-results">
+      <ul className="search-results" aria-label="Saved drafts">
         {items.map((d) => {
-          const [kind, , documentId, commentId] = d.key.split(':');
+          const [kind, , artifactId, commentId] = d.key.split(':');
           const value = d.value as {
             body?: string;
             note?: string;
             text?: string;
+            message?: string;
           };
           const preview =
             typeof d.value === 'string'
@@ -51,77 +53,85 @@ export function Drafts({
               : (value?.body ??
                 value?.note ??
                 value?.text ??
+                value?.message ??
                 'Unsent feedback');
           return (
-            <article className="search-result" key={d.slot}>
-              <strong>
-                {names[kind] ?? 'Draft'} · {dateLabel(d.updatedAt)}
-              </strong>
-              <p>{preview.slice(0, 180)}</p>
-              {kind === 'pw-popover-draft' && (
-                <p className="muted">
-                  Reopen the same passage on its original revision to continue.
-                  You can also download your text and attachment references.
-                </p>
-              )}
-              <div className="button-row">
-                <button
-                  className="button small-button"
-                  onClick={async () => {
-                    try {
-                      const doc = await api<Document>(
-                        `/documents/${documentId}`,
-                      );
-                      sessionStorage.setItem('pw-selected-draft', d.slot);
-                      onOpen(
-                        doc.workspaceId,
-                        doc.id,
-                        kind === 'pw-reply-draft' ||
-                          kind === 'pw-annotation-draft'
-                          ? commentId
-                          : undefined,
-                      );
-                    } catch (e) {
-                      setError(errorText(e));
-                    }
-                  }}
-                >
-                  Resume draft
-                </button>
-                <button
-                  className="text-button"
-                  onClick={() =>
-                    download(
-                      'saved-draft.txt',
-                      typeof d.value === 'string'
-                        ? d.value
-                        : JSON.stringify(d.value, null, 2),
-                    )
-                  }
-                >
-                  Download draft
-                </button>
-                <button
-                  className="text-button"
-                  onClick={() => {
-                    if (confirm('Discard this saved draft?')) {
+            <li key={d.slot}>
+              <article className="search-result">
+                <strong>{names[kind] ?? 'Draft'} draft</strong>
+                <small>Saved {dateLabel(d.updatedAt)}</small>
+                <p className="result-preview">{preview.slice(0, 280)}</p>
+                {kind === 'pw-popover-draft' && (
+                  <p className="muted">
+                    Reopen the same passage on its original revision to
+                    continue. You can also download your text and attachment
+                    references.
+                  </p>
+                )}
+                <div className="button-row">
+                  <button
+                    className="button small-button"
+                    onClick={async () => {
                       try {
-                        localStorage.removeItem(d.slot);
-                        setItems(savedDrafts(user.id));
+                        const doc = await api<Artifact>(
+                          `/artifacts/${artifactId}`,
+                        );
+                        sessionStorage.setItem('pw-selected-draft', d.slot);
+                        onOpen(
+                          doc.workspaceId,
+                          doc.id,
+                          kind === 'pw-reply-draft' ||
+                            kind === 'pw-annotation-draft'
+                            ? commentId
+                            : undefined,
+                        );
                       } catch (e) {
                         setError(errorText(e));
                       }
+                    }}
+                  >
+                    Resume draft
+                  </button>
+                  <button
+                    className="text-button"
+                    onClick={() =>
+                      download(
+                        'saved-draft.txt',
+                        typeof d.value === 'string'
+                          ? d.value
+                          : JSON.stringify(d.value, null, 2),
+                      )
                     }
-                  }}
-                >
-                  Discard draft
-                </button>
-              </div>
-            </article>
+                  >
+                    Download draft
+                  </button>
+                  <button
+                    className="text-button danger"
+                    onClick={async () => {
+                      if (await confirm('Discard this saved draft?')) {
+                        try {
+                          localStorage.removeItem(d.slot);
+                          setItems(savedDrafts(user.id));
+                        } catch (e) {
+                          setError(errorText(e));
+                        }
+                      }
+                    }}
+                  >
+                    Discard draft
+                  </button>
+                </div>
+              </article>
+            </li>
           );
         })}
-        {!items.length && <p>No saved drafts.</p>}
-      </div>
-    </Modal>
+        {!items.length && (
+          <li className="list-empty">
+            No saved drafts. Your unfinished edits and feedback will appear
+            here.
+          </li>
+        )}
+      </ul>
+    </SettingsPage>
   );
 }
