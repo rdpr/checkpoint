@@ -47,7 +47,7 @@ export async function handleMcp(
           ),
       );
     }
-    const inputSchema: z.AnyZodObject = z.object(shape);
+    const inputSchema: z.ZodObject = z.object(shape);
     server.registerTool(
       name,
       {
@@ -119,7 +119,7 @@ export async function handleMcp(
   tool(
     'change_artifact_metadata',
     'Rename or move within a workspace, archive or unarchive. Read first and pass currentRevisionId and metadataVersion. Archiving preserves history and prevents edits.',
-    schema.changeArtifact.innerType().shape,
+    schema.changeArtifact.shape,
     false,
     (d) => store.changeArtifact(actor, d),
   );
