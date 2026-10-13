@@ -1,3 +1,4 @@
+import { Select } from './Select';
 import {
   AgentConnectionSetup,
   ServiceAccounts,
@@ -14,7 +15,7 @@ import type {
   Organization,
 } from '../shared/types';
 import { api, post, errorText, initials, dateLabel } from './api';
-import { ErrorMessage, Modal } from './ui';
+import { ErrorMessage, SettingsPage } from './ui';
 import { WorkspaceMembership } from './Organization';
 
 export function Access({
@@ -87,17 +88,19 @@ export function Access({
     });
   }
   return (
-    <Modal
+    <SettingsPage
       title={
         kind === 'members' ? 'People in this workspace' : 'Connect your agent'
       }
       onClose={onClose}
     >
-      <p className="muted">
-        {kind === 'members'
-          ? `${workspace.name} · Share a place to write, discuss, and decide.`
-          : 'Give an agent access to this workspace through MCP or the HTTP API.'}
-      </p>
+      {kind === 'agents' && (
+        <p className="muted">
+          Let an agent publish a design, request your review, and use the
+          feedback to revise. Keys are scoped to this workspace; review
+          decisions belong to people.
+        </p>
+      )}
       <ErrorMessage message={error} />
       {error && (
         <button
@@ -193,10 +196,10 @@ export function Access({
               <form onSubmit={create} className="inline-form">
                 <label>
                   Invite someone as
-                  <select name="role">
+                  <Select name="role">
                     <option value="editor">Editor — write and discuss</option>
                     <option value="viewer">Viewer — read only</option>
-                  </select>
+                  </Select>
                 </label>
                 <button className="button primary" disabled={busy}>
                   <Link size={16} />
@@ -251,40 +254,46 @@ export function Access({
               <small>Authorization: Bearer &lt;your agent key&gt;</small>
             </div>
           </div>
-          <AgentConnectionSetup
-            credential={credential}
-            workspaceId={workspace.id}
-            onChecked={() => void load().catch((e) => setError(errorText(e)))}
-          />
-          <h3>Personal agent key</h3>
-          <form onSubmit={create} className="token-form">
-            <label>
-              Agent name
-              <input
-                name="name"
-                placeholder="e.g. Planning agent"
-                maxLength={80}
-                required
-              />
-            </label>
-            <label>
-              Access
-              <select name="scope">
-                <option value="read">Read documents and discussions</option>
-                {workspace.role !== 'viewer' && (
-                  <option value="write">Read, edit, and comment</option>
-                )}
-              </select>
-            </label>
-            <button className="button primary" disabled={busy}>
-              <KeyRound size={16} />
-              Create agent key
-            </button>
-          </form>
-          <p className="small muted">
-            Agent changes are attributed to the key’s name and your account.
-            Keys cannot manage members or create other keys.
-          </p>
+          <div className="agent-setup-grid">
+            <section className="setup-card">
+              <h3>
+                <span className="step-number">1</span>Create a personal key
+              </h3>
+              <form onSubmit={create} className="token-form">
+                <label>
+                  Agent name
+                  <input
+                    name="name"
+                    placeholder="e.g. Planning agent"
+                    maxLength={80}
+                    required
+                  />
+                </label>
+                <label>
+                  Access
+                  <Select name="scope">
+                    <option value="read">Read artifacts and discussions</option>
+                    {workspace.role !== 'viewer' && (
+                      <option value="write">Read, edit, and comment</option>
+                    )}
+                  </Select>
+                </label>
+                <button className="button primary" disabled={busy}>
+                  <KeyRound size={16} />
+                  Create agent key
+                </button>
+              </form>
+              <p className="small muted">
+                Agent changes are attributed to the key’s name and your account.
+                Keys cannot manage members or create other keys.
+              </p>
+            </section>
+            <AgentConnectionSetup
+              credential={credential}
+              workspaceId={workspace.id}
+              onChecked={() => void load().catch((e) => setError(errorText(e)))}
+            />
+          </div>
           <div className="access-list">
             <h3>Your agent keys</h3>
             {tokens.length ? (
@@ -313,7 +322,7 @@ export function Access({
               ))
             ) : (
               <p className="muted small">
-                No keys yet. Create one to bring an agent into the conversation.
+                No agent keys yet.
               </p>
             )}
           </div>
@@ -328,6 +337,6 @@ export function Access({
           )}
         </>
       )}
-    </Modal>
+    </SettingsPage>
   );
 }

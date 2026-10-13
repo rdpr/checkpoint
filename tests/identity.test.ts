@@ -194,7 +194,7 @@ test('Entra HTTP flow links explicitly, validates signed claims, accepts invitat
   }
 });
 
-test('health and bearer-protected metrics expose operational failures without document or user labels', async () => {
+test('health and bearer-protected metrics expose operational failures without artifact or user labels', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pw-metrics-'));
   const store = new Store(join(directory, 'db.sqlite'));
   const operationsFile = join(directory, 'operations.json');
@@ -242,7 +242,7 @@ test('health and bearer-protected metrics expose operational failures without do
         restore_drill_last_success: 123400,
       }),
     );
-    await fetch(base + '/api/documents/private-document-id');
+    await fetch(base + '/api/artifacts/private-artifact-id');
     const metrics = await scrape();
     assert.match(
       metrics,
@@ -252,7 +252,7 @@ test('health and bearer-protected metrics expose operational failures without do
     assert.match(metrics, /area="api"/);
     assert.doesNotMatch(
       metrics,
-      /private-document-id|Private Name|private@example/,
+      /private-artifact-id|Private Name|private@example/,
     );
     store.close();
     assert.equal((await fetch(base + '/readyz')).status, 503);

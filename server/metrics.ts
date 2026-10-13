@@ -85,7 +85,7 @@ export function monitoring(
   }
   async function render() {
     try {
-      store.db.prepare('SELECT id FROM documents LIMIT 1').get();
+      store.db.prepare('SELECT id FROM artifacts LIMIT 1').get();
       database.set(1);
     } catch {
       database.set(0);

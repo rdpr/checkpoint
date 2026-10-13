@@ -1,10 +1,19 @@
 import { z } from 'zod';
+import {
+  isAnnotatableDocPath,
+  ANNOTATABLE_EXTENSIONS_HINT,
+} from '../shared/artifacts.ts';
+import {
+  parseHtmlElementAnchor,
+  parseHtmlElementContext,
+  parseHtmlAdditionalTargets,
+} from '@plannotator/core/html-anchor';
 import { parseDiagramAnchor } from '@plannotator/core/diagram-anchor';
 
 export const id = z.string().uuid();
 export const body = z
   .string()
-  .max(1_000_000, 'Documents must be smaller than one million characters.');
+  .max(1_000_000, 'Artifacts must be smaller than one million characters.');
 export const path = z
   .string()
   .trim()
@@ -16,8 +25,11 @@ export const path = z
       !value.includes('\\') &&
       !/[\x00-\x1f\x7f]/.test(value) &&
       value.split('/').every((part) => part && part !== '.' && part !== '..') &&
-      /\.md$/i.test(value),
-    'Use a relative Markdown path, such as specs/plan.md.',
+      isAnnotatableDocPath(value),
+    `Use a relative artifact path with a supported extension: ${ANNOTATABLE_EXTENSIONS_HINT}.`,
+  )
+  .describe(
+    `Relative artifact path. Supported extensions: ${ANNOTATABLE_EXTENSIONS_HINT}.`,
   );
 export const account = z.object({
   name: z.string().trim().min(1).max(80),
@@ -30,14 +42,14 @@ export const account = z.object({
   password: z.string().min(12).max(256),
 });
 export const credentials = account.pick({ email: true, password: true });
-export const createDocument = z.object({ workspaceId: id, path, body });
-export const updateDocument = z.object({
-  documentId: id,
+export const createArtifact = z.object({ workspaceId: id, path, body });
+export const updateArtifact = z.object({
+  artifactId: id,
   expectedRevisionId: id,
   body,
 });
-export const restoreDocument = z.object({
-  documentId: id,
+export const restoreArtifact = z.object({
+  artifactId: id,
   revisionId: id,
   expectedRevisionId: id,
 });
@@ -48,6 +60,34 @@ const textMeta = z.object({
   textOffset: z.number().int().nonnegative().max(1000000),
 });
 export const anchor = z.object({
+  htmlAnchor: z
+    .unknown()
+    .transform((value, ctx) => {
+      const parsed = parseHtmlElementAnchor(value);
+      if (parsed) return parsed;
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Invalid HTML element anchor.',
+      });
+      return z.NEVER;
+    })
+    .optional(),
+  htmlAdditionalTargets: z
+    .array(
+      z.object({
+        text: z.string().min(1).max(400),
+        label: z.string().max(64).optional(),
+        anchor: z.unknown().optional(),
+        context: z.unknown().optional(),
+      }),
+    )
+    .max(16)
+    .transform((value) => parseHtmlAdditionalTargets(value))
+    .optional(),
+  elementContext: z
+    .unknown()
+    .transform((value) => parseHtmlElementContext(value))
+    .optional(),
   blockId: z.string().max(200).optional(),
   startOffset: z.number().int().nonnegative().max(1000000).optional(),
   endOffset: z.number().int().nonnegative().max(1000000).optional(),
@@ -85,7 +125,7 @@ export const diffAnchor = z.object({
 });
 export const addComment = z.object({
   submissionId: id.optional(),
-  documentId: id,
+  artifactId: id,
   revisionId: id,
   diff: diffAnchor.nullable().default(null),
   body: z.string().trim().max(10_000).default(''),
@@ -108,7 +148,7 @@ export const resolve = z.object({ commentId: id, resolved: z.boolean() });
 export const role = z.enum(['editor', 'viewer']);
 
 export const review = z.object({
-  documentId: id,
+  artifactId: id,
   expectedRevisionId: id,
   decision: z.enum(['approved', 'changes_requested', 'withdrawn']),
   note: z.string().trim().max(10000).default(''),
@@ -129,7 +169,7 @@ export const reattachComment = z.object({
 });
 
 export const requestReview = z.object({
-  documentId: id,
+  artifactId: id,
   expectedRevisionId: id,
   reviewerId: id,
   message: z.string().trim().max(5000).default(''),
@@ -143,9 +183,9 @@ export const renewReviewRequest = cancelReviewRequest.extend({
   message: z.string().trim().max(5000).optional(),
 });
 
-export const changeDocument = z
+export const changeArtifact = z
   .object({
-    documentId: id,
+    artifactId: id,
     expectedRevisionId: id,
     expectedMetadataVersion: z.number().int().positive(),
     path: path.optional(),
@@ -155,8 +195,40 @@ export const changeDocument = z
     (d) => d.path !== undefined || d.archived !== undefined,
     'Choose a path or archive change.',
   );
-export const searchDocuments = z.object({
+export const searchArtifacts = z.object({
   query: z.string().trim().min(1).max(200),
   workspaceId: id.optional(),
   includeArchived: z.boolean().default(false),
+});
+
+export const folderName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .refine(
+    (name) => !/[\\/\x00-\x1f\x7f]/.test(name) && name !== '.' && name !== '..',
+    'Use a folder name without slashes.',
+  );
+export const createFolder = z.object({
+  workspaceId: id,
+  parentId: id.nullable().default(null),
+  name: folderName,
+});
+export const changeFolder = z.object({
+  workspaceId: id,
+  folderId: id,
+  expectedCatalogVersion: z.number().int().nonnegative(),
+  name: folderName.optional(),
+  parentId: id.nullable().optional(),
+  remove: z.boolean().default(false),
+  expectedArtifacts: z
+    .array(
+      z.object({
+        id,
+        expectedRevisionId: id,
+        expectedMetadataVersion: z.number().int().positive(),
+      }),
+    )
+    .default([]),
 });

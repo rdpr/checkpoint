@@ -1,4 +1,21 @@
-import { navigate, documentUrl } from './navigation';
+import { AccountMenu } from './AccountMenu';
+import {
+  ArtifactNavigation,
+  FolderDialog,
+  FolderPicker,
+  folderSegments,
+  pathInFolder,
+  type FolderIntent,
+} from './Folders';
+import { modKey } from '@plannotator/ui/utils/platform';
+import { Select } from './Select';
+import {
+  ANNOTATABLE_EXTENSIONS_HINT,
+  isAnnotatableDocPath,
+  artifactExtension,
+  artifactFormat,
+} from '../shared/artifacts';
+import { navigate, artifactUrl } from './navigation';
 import { Drafts } from './Drafts';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
@@ -7,7 +24,6 @@ import {
   Search,
   Users,
   Bot,
-  LogOut,
   ChevronRight,
   FolderOpen,
   ClipboardCheck,
@@ -19,22 +35,30 @@ import {
   Bell,
 } from 'lucide-react';
 import type {
+  Catalog,
   User,
   Organization,
   Workspace,
-  DocumentSummary,
+  ArtifactSummary,
   ReviewRequest,
-  Document,
+  Artifact,
 } from '../shared/types';
-import { api, post, errorText, initials, dateLabel } from './api';
+import {
+  api,
+  post,
+  errorText,
+  dateLabel,
+  artifactLabel,
+  initials,
+} from './api';
 import { Auth } from './Auth';
 import { Account } from './Account';
 import { MyReviews } from './ReviewRequests';
-import { SearchDocuments, Notifications } from './Discovery';
+import { SearchArtifacts, Notifications } from './Discovery';
 import { Access } from './Access';
 import { OrganizationSettings } from './Organization';
-import { DocumentView } from './DocumentView';
-import { Brand, ErrorMessage, Loading, Modal } from './ui';
+import { ArtifactView } from './ArtifactView';
+import { Brand, ErrorMessage, Loading, Modal, Sidebar } from './ui';
 import { setIdentity } from './identity';
 import { useReviewPreferences } from './reviewPreferences';
 
@@ -239,6 +263,14 @@ export function App() {
   );
 }
 
+const pageViews = [
+  'account',
+  'organization',
+  'members',
+  'agents',
+  'drafts',
+  'notifications',
+];
 function WorkspaceApp({
   user,
   onLogout,
@@ -246,6 +278,21 @@ function WorkspaceApp({
   user: User;
   onLogout: () => Promise<void>;
 }) {
+  const [pageView, setPageView] = useState(
+    () => new URLSearchParams(location.search).get('view') ?? '',
+  );
+  const [mobile, setMobile] = useState(
+    () => matchMedia('(max-width: 900px)').matches,
+  );
+  useEffect(() => {
+    const media = matchMedia('(max-width: 900px)');
+    const resize = () => {
+      setMobile(media.matches);
+      setSidebar(!media.matches);
+    };
+    media.addEventListener('change', resize);
+    return () => media.removeEventListener('change', resize);
+  }, []);
   const [queue, setQueue] = useState(
     () => new URLSearchParams(location.search).get('view') === 'reviews',
   );
@@ -255,15 +302,29 @@ function WorkspaceApp({
   );
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]),
     [wid, setWid] = useState(''),
-    [documents, setDocuments] = useState<DocumentSummary[]>([]),
+    [artifacts, setArtifacts] = useState<ArtifactSummary[]>([]),
     [did, setDid] = useState<string | null>(null);
-  const [search, setSearch] = useState(''),
-    [error, setError] = useState<string | null>(null),
+  const [catalogWorkspaceId, setCatalogWorkspaceId] = useState('');
+  const [catalog, setCatalog] = useState<Catalog>({
+    version: 0,
+    folders: [],
+    artifacts: [],
+  });
+  const [folderId, setFolderId] = useState<string | null>(() =>
+    new URLSearchParams(location.search).get('folder'),
+  );
+  const [folderIntent, setFolderIntent] = useState<FolderIntent | null>(null);
+  const [createFolderId, setCreateFolderId] = useState<string | null>(null);
+  const [artifactName, setArtifactName] = useState('');
+  const [artifactBody, setArtifactBody] = useState('');
+  const [newExtension, setNewExtension] = useState('.md');
+  const [searchWorkspaceId, setSearchWorkspaceId] = useState('');
+  const [error, setError] = useState<string | null>(null),
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false);
-  const [modal, setModal] = useState<
+  const [modal, setDialog] = useState<
       | 'workspace'
-      | 'document'
+      | 'artifact'
       | 'members'
       | 'agents'
       | 'organization'
@@ -273,7 +334,37 @@ function WorkspaceApp({
       | 'drafts'
       | null
     >(null),
-    [sidebar, setSidebar] = useState(true);
+    [sidebar, setSidebar] = useState(
+      () => !matchMedia('(max-width: 900px)').matches,
+    );
+  function setModal(next: typeof modal) {
+    if (next === 'search') setSearchWorkspaceId('');
+    if (next && pageViews.includes(next)) {
+      const url = new URL(location.href);
+      url.searchParams.set('view', next);
+      url.searchParams.delete('section');
+      navigate(url);
+      setDialog(null);
+      if (mobile) setSidebar(false);
+    } else setDialog(next);
+  }
+  function closePage() {
+    const url = new URL(location.href);
+    url.searchParams.delete('view');
+    url.searchParams.delete('section');
+    navigate(url);
+  }
+  useEffect(() => {
+    const search = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setSearchWorkspaceId('');
+        setDialog('search');
+      }
+    };
+    window.addEventListener('keydown', search);
+    return () => window.removeEventListener('keydown', search);
+  }, []);
   const [showArchived, setShowArchived] = useState(false);
   const [unread, setUnread] = useState(0);
   useEffect(() => {
@@ -295,7 +386,7 @@ function WorkspaceApp({
   }, []);
   const [organization, setOrganization] = useState<Organization | null>(null);
   const workspace = workspaces.find((w) => w.id === wid),
-    current = documents.find((d) => d.id === did);
+    current = artifacts.find((d) => d.id === did);
   async function refreshWorkspaces() {
     setOrganization(await api<Organization>('/organization'));
     const next = await api<Workspace[]>('/workspaces');
@@ -308,7 +399,7 @@ function WorkspaceApp({
         const url = new URLSearchParams(location.search),
           wanted = url.get('workspace');
         setWid(next.find((w) => w.id === wanted)?.id ?? next[0]?.id ?? '');
-        setDid(url.get('document'));
+        setDid(url.get('artifact') ?? url.get('document'));
         if (!wanted && next[0]) {
           const initial = new URL(location.href);
           initial.searchParams.set('workspace', next[0].id);
@@ -324,15 +415,16 @@ function WorkspaceApp({
   useEffect(() => {
     if (!wid) return;
     let active = true;
-    setDocuments([]);
+    setArtifacts([]);
+    setCatalog({ version: 0, folders: [], artifacts: [] });
     setLoading(true);
     const load = async () => {
       try {
-        const next = await api<DocumentSummary[]>(
-          `/workspaces/${wid}/documents?includeArchived=true`,
-        );
+        const next = await api<Catalog>(`/workspaces/${wid}/catalog`);
         if (active) {
-          setDocuments(next);
+          setArtifacts(next.artifacts);
+          setCatalog(next);
+          setCatalogWorkspaceId(wid);
           setLoading(false);
         }
       } catch (e) {
@@ -355,9 +447,12 @@ function WorkspaceApp({
     const readRoute = () => {
       const url = new URLSearchParams(location.search);
       setWid(url.get('workspace') ?? workspaces[0]?.id ?? '');
-      setDid(url.get('document'));
+      setFolderId(url.get('folder'));
+      setDid(url.get('artifact') ?? url.get('document'));
       setRequestId(url.get('request'));
       setQueue(url.get('view') === 'reviews');
+      setPageView(url.get('view') ?? '');
+      if (matchMedia('(max-width: 900px)').matches) setSidebar(false);
       setRequestVisit((v) => v + 1);
       setError(null);
     };
@@ -368,24 +463,37 @@ function WorkspaceApp({
       window.removeEventListener('pw:navigate', readRoute);
     };
   }, [workspaces]);
-  function selectDocument(
+  function selectArtifact(
     id: string | null,
     workspaceId = wid,
     extra: Record<string, string> = {},
   ) {
-    navigate(documentUrl(workspaceId, id, extra));
+    navigate(artifactUrl(workspaceId, id, extra));
   }
   function openRequest(request: ReviewRequest) {
     updatePreferences({ layout: 'normal' });
-    selectDocument(request.documentId, request.workspaceId, {
+    selectArtifact(request.artifactId, request.workspaceId, {
       request: request.id,
     });
   }
-  async function refreshDocuments() {
-    if (wid)
-      setDocuments(
-        await api(`/workspaces/${wid}/documents?includeArchived=true`),
-      );
+  function applyCatalog(next: Catalog) {
+    setCatalogWorkspaceId(wid);
+    setCatalog(next);
+    setArtifacts(next.artifacts);
+  }
+  function openFolder(id: string | null) {
+    navigate(artifactUrl(wid, null, id ? { folder: id } : {}));
+  }
+  function startArtifact(parentId: string | null = folderId) {
+    setCreateFolderId(parentId);
+    setArtifactName('');
+    setArtifactBody('');
+    setNewExtension('.md');
+    setModal('artifact');
+    setError(null);
+  }
+  async function refreshArtifacts() {
+    if (wid) applyCatalog(await api<Catalog>(`/workspaces/${wid}/catalog`));
   }
   async function create(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -396,15 +504,20 @@ function WorkspaceApp({
       if (modal === 'workspace') {
         const created = await post<Workspace>('/workspaces', values);
         await refreshWorkspaces();
-        selectDocument(null, created.id);
+        selectArtifact(null, created.id);
       } else {
-        const created = await post<Document>('/documents', {
+        const created = await post<Artifact>('/artifacts', {
           workspaceId: wid,
-          path: values.path,
+          path: pathInFolder(
+            catalog.folders,
+            createFolderId,
+            artifactName,
+            newExtension,
+          ),
           body: String(values.body ?? ''),
         });
-        await refreshDocuments();
-        selectDocument(created.id);
+        await refreshArtifacts();
+        selectArtifact(created.id);
       }
       setModal(null);
     } catch (e) {
@@ -413,17 +526,25 @@ function WorkspaceApp({
       setBusy(false);
     }
   }
-  const activeDocumentCount = documents.filter((d) => !d.archivedAt).length;
-  const filtered = documents.filter(
-    (d) =>
-      (showArchived || !d.archivedAt) &&
-      d.path.toLowerCase().includes(search.toLowerCase()),
-  );
+  useEffect(() => {
+    if (
+      !loading &&
+      catalogWorkspaceId === wid &&
+      folderId &&
+      !catalog.folders.some((f) => f.id === folderId)
+    )
+      openFolder(null);
+  }, [loading, catalog, folderId, catalogWorkspaceId, wid]);
+  const activeArtifactCount = artifacts.filter((d) => !d.archivedAt).length;
+  const filtered = artifacts.filter((d) => showArchived || !d.archivedAt);
   async function openLink(path: string, revisionId: string) {
     try {
       if (/^(https?:|mailto:)/i.test(path)) {
         const url = new URL(path, location.href);
-        if (url.origin === location.origin && url.searchParams.has('document'))
+        if (
+          url.origin === location.origin &&
+          (url.searchParams.has('artifact') || url.searchParams.has('document'))
+        )
           navigate(url);
         else window.open(path, '_blank', 'noopener,noreferrer');
         return;
@@ -431,12 +552,12 @@ function WorkspaceApp({
       if (!did) return;
       const target = await api<{
         workspaceId: string;
-        documentId: string;
+        artifactId: string;
         fragment: string;
       }>(
-        `/documents/${did}/resolve-link?${new URLSearchParams({ revisionId, href: path })}`,
+        `/artifacts/${did}/resolve-link?${new URLSearchParams({ revisionId, href: path })}`,
       );
-      selectDocument(target.documentId, target.workspaceId, {
+      selectArtifact(target.artifactId, target.workspaceId, {
         ...(target.fragment
           ? { heading: decodeURIComponent(target.fragment) }
           : {}),
@@ -449,49 +570,57 @@ function WorkspaceApp({
   const { preferences, updatePreferences, storageError } = useReviewPreferences(
     user.id,
   );
-  const readerLayout = !!did && preferences.layout !== 'normal';
+  const readerLayout =
+    !!did && !pageViews.includes(pageView) && preferences.layout === 'focus';
   const sidebarVisible = sidebar && !readerLayout;
   return (
     <div className={`app-shell ${sidebarVisible ? '' : 'sidebar-collapsed'}`}>
       {modal === 'search' && (
-        <SearchDocuments
+        <SearchArtifacts
           workspaces={workspaces}
+          initialWorkspaceId={searchWorkspaceId}
           onClose={() => setModal(null)}
           onOpen={(w, d) => {
             setModal(null);
-            selectDocument(d, w);
-          }}
-        />
-      )}
-      {modal === 'notifications' && (
-        <Notifications
-          onCount={setUnread}
-          onClose={() => setModal(null)}
-          onRequest={(r) => {
-            setModal(null);
-            openRequest(r);
-          }}
-          onOpen={(w, d, c) => {
-            setModal(null);
-            updatePreferences({ layout: 'normal' });
-            selectDocument(d, w, c ? { comment: c } : {});
-          }}
-        />
-      )}
-      {modal === 'drafts' && (
-        <Drafts
-          user={user}
-          onClose={() => setModal(null)}
-          onOpen={(w, d, c) => {
-            setModal(null);
-            updatePreferences({ layout: 'normal' });
-            selectDocument(d, w, c ? { comment: c } : {});
+            selectArtifact(d, w);
           }}
         />
       )}
       {sidebarVisible && (
-        <aside className="sidebar">
+        <Sidebar mobile={mobile} onClose={() => setSidebar(false)}>
           <Brand />
+          <nav className="personal-navigation" aria-label="Personal work">
+            <button
+              className="sidebar-overview"
+              onClick={() => setModal('search')}
+            >
+              <Search size={17} /> Search{' '}
+              <kbd aria-hidden="true">{modKey} K</kbd>
+            </button>
+            <button
+              className={`sidebar-overview ${queue ? 'active' : ''}`}
+              onClick={() => {
+                selectArtifact(null, wid, { view: 'reviews' });
+              }}
+            >
+              <ClipboardCheck size={17} /> My reviews
+            </button>
+            <button
+              className={`sidebar-overview ${pageView === 'notifications' ? 'active' : ''}`}
+              onClick={() => setModal('notifications')}
+            >
+              <Bell size={17} />
+              Notifications {!!unread && <span>{unread}</span>}
+            </button>
+            <button
+              className={`sidebar-overview ${pageView === 'drafts' ? 'active' : ''}`}
+              onClick={() => setModal('drafts')}
+            >
+              <FileText size={17} />
+              Saved drafts
+            </button>
+          </nav>
+          <div className="sidebar-section-title">WORKSPACE</div>
           <div className="workspace-picker">
             <span className="workspace-icon">
               {workspace ? initials(workspace.name).slice(0, 1) : 'W'}
@@ -499,12 +628,12 @@ function WorkspaceApp({
             <label className="sr-only" htmlFor="workspace-select">
               Current workspace
             </label>
-            <select
+            <Select
+              searchable
               id="workspace-select"
               value={wid}
               onChange={(e) => {
-                selectDocument(null, e.target.value);
-                setSearch('');
+                selectArtifact(null, e.target.value);
               }}
             >
               <option disabled value="">
@@ -515,7 +644,7 @@ function WorkspaceApp({
                   {w.name}
                 </option>
               ))}
-            </select>
+            </Select>
             <button
               className="icon-button"
               aria-label="New workspace"
@@ -529,128 +658,45 @@ function WorkspaceApp({
             </button>
           </div>
           <button
-            className={`sidebar-overview ${!did && !queue ? 'active' : ''}`}
-            onClick={() => selectDocument(null)}
+            className={`sidebar-overview ${!did && !folderId && !pageView ? 'active' : ''}`}
+            onClick={() => selectArtifact(null)}
           >
             <FolderOpen size={17} />
-            All documents
-            <span>{activeDocumentCount}</span>
+            All artifacts
+            <span>{activeArtifactCount}</span>
           </button>
-          <button
-            className={`sidebar-overview ${queue ? 'active' : ''}`}
-            onClick={() => {
-              selectDocument(null, wid, { view: 'reviews' });
+          <ArtifactNavigation
+            key={wid}
+            folders={catalog.folders}
+            artifacts={filtered}
+            selectedId={!pageView ? did : null}
+            selectedFolderId={!did && !pageView ? folderId : null}
+            onOpen={(id) => selectArtifact(id)}
+            onFolder={openFolder}
+            onCreate={startArtifact}
+            onManage={setFolderIntent}
+            onSearch={() => {
+              setSearchWorkspaceId(wid);
+              setDialog('search');
             }}
-          >
-            <ClipboardCheck size={17} /> My reviews
-          </button>
-          <div className="sidebar-section-title">
-            <span>DOCUMENTS</span>
-            {workspace?.role !== 'viewer' && (
-              <button
-                className="icon-button"
-                aria-label="New document"
-                title="New document"
-                onClick={() => {
-                  setModal('document');
-                  setError(null);
-                }}
-              >
-                <Plus size={16} />
-              </button>
-            )}
-          </div>
-          <div className="sidebar-search">
-            <Search size={14} />
-            <input
-              aria-label="Find a document"
-              placeholder="Find a document…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-          <label className="checkbox-label archive-toggle">
-            <input
-              type="checkbox"
-              checked={showArchived}
-              onChange={(e) => setShowArchived(e.target.checked)}
-            />
-            Show archived
-          </label>
-          <nav className="document-tree" aria-label="Workspace documents">
-            {filtered.map((d) => (
-              <button
-                key={d.id}
-                className={d.id === did ? 'active' : ''}
-                onClick={() => selectDocument(d.id)}
-                title={d.path}
-              >
-                <FileText size={16} />
-                <span>
-                  {d.path.includes('/') && (
-                    <small>
-                      {d.path.slice(0, d.path.lastIndexOf('/') + 1)}
-                    </small>
-                  )}
-                  {d.path.split('/').pop()}
-                  {d.archivedAt ? ' · Archived' : ''}
-                </span>
-                {d.id === did && <span className="active-dot" />}
-              </button>
-            ))}
-            {!loading && !filtered.length && (
-              <p className="sidebar-empty">
-                {search
-                  ? 'No matching documents.'
-                  : 'Your first document starts here.'}
-              </p>
-            )}
-          </nav>
+            canWrite={!!workspace && workspace.role !== 'viewer'}
+            showArchived={showArchived}
+            onArchived={() => setShowArchived(!showArchived)}
+            userId={user.id}
+            workspaceId={wid}
+          />
           <div className="sidebar-bottom">
-            <div className="workspace-links">
-              <button onClick={() => setModal('drafts')}>
-                <FileText size={17} />
-                Saved drafts
-              </button>
-              <button onClick={() => setModal('account')}>
-                <UserRound size={17} />
-                Account
-              </button>
-              {organization?.isAdmin && (
-                <button onClick={() => setModal('organization')}>
-                  <Building2 size={17} />
-                  Organization
-                </button>
-              )}
-              <button onClick={() => setModal('members')} disabled={!workspace}>
-                <Users size={17} />
-                Members
-              </button>
-              <button onClick={() => setModal('agents')} disabled={!workspace}>
-                <Bot size={17} />
-                Agent access
-                <ArrowUpRight size={14} />
-              </button>
-            </div>
-            <div className="user-card">
-              <span className="avatar">{initials(user.name)}</span>
-              <div>
-                <strong>{user.name}</strong>
-                <small>{workspace?.role ?? 'Member'}</small>
-              </div>
-              <button
-                className="icon-button"
-                aria-label="Sign out"
-                title="Sign out"
-                onClick={() =>
-                  void onLogout().catch((e) => setError(errorText(e)))
-                }
-              >
-                <LogOut size={17} />
-              </button>
-            </div>
+            <AccountMenu
+              user={user}
+              workspace={workspace}
+              isAdmin={!!organization?.isAdmin}
+              onOpen={setModal}
+              onLogout={() =>
+                void onLogout().catch((e) => setError(errorText(e)))
+              }
+            />
           </div>
-        </aside>
+        </Sidebar>
       )}
       <main className="app-main">
         <header className="app-header">
@@ -673,29 +719,49 @@ function WorkspaceApp({
                 <PanelLeftOpen size={18} />
               )}
             </button>
-            <span>{workspace?.name ?? 'Workspaces'}</span>
+            <span>
+              {queue ||
+              ['account', 'drafts', 'notifications'].includes(pageView)
+                ? 'Personal work'
+                : pageView === 'organization'
+                  ? 'Administration'
+                  : (workspace?.name ?? 'Workspaces')}
+            </span>
             <ChevronRight size={13} />
+            {!pageView &&
+              current &&
+              folderSegments(catalog.folders, current.folderId).map((f) => (
+                <span className="breadcrumb-folder" key={f.id}>
+                  <button onClick={() => openFolder(f.id)}>{f.name}</button>
+                  <ChevronRight size={13} />
+                </span>
+              ))}
             <strong>
-              {queue ? 'My reviews' : (current?.path ?? 'All documents')}
+              {pageViews.includes(pageView)
+                ? {
+                    account: 'Account',
+                    organization: 'Organization',
+                    members: 'Members',
+                    agents: 'Agent access',
+                    drafts: 'Saved drafts',
+                    notifications: 'Notifications',
+                  }[pageView]
+                : queue
+                  ? 'My reviews'
+                  : current
+                    ? artifactLabel(current.path)
+                    : (catalog.folders.find((f) => f.id === folderId)?.name ??
+                      'All artifacts')}
             </strong>
           </div>
-          <div className="button-row">
-            <button className="text-button" onClick={() => setModal('search')}>
-              <Search size={16} />
-              Search
-            </button>
-            <button
-              className="text-button"
-              onClick={() => setModal('notifications')}
-            >
-              <Bell size={16} />
-              Notifications{unread > 0 ? ` (${unread})` : ''}
-            </button>
-          </div>
-          <span className="private-label">
-            <span />
-            Private workspace
-          </span>
+          <div id="artifact-header-actions" />
+          <button
+            className="icon-button mobile-search"
+            aria-label="Search artifacts"
+            onClick={() => setModal('search')}
+          >
+            <Search size={18} />
+          </button>
         </header>
         {error && !modal && (
           <div className="app-error">
@@ -705,10 +771,116 @@ function WorkspaceApp({
             </button>
           </div>
         )}
-        {queue ? (
+        {pageViews.includes(pageView) ? (
+          <>
+            {['account', 'organization', 'members', 'agents'].includes(
+              pageView,
+            ) && (
+              <nav
+                className="settings-navigation"
+                aria-label="Settings sections"
+              >
+                <button
+                  aria-current={pageView === 'account' ? 'page' : undefined}
+                  onClick={() => setModal('account')}
+                >
+                  <UserRound size={17} />
+                  Account
+                </button>
+                {organization?.isAdmin && (
+                  <button
+                    aria-current={
+                      pageView === 'organization' ? 'page' : undefined
+                    }
+                    onClick={() => setModal('organization')}
+                  >
+                    <Building2 size={17} />
+                    Organization
+                  </button>
+                )}
+                <button
+                  aria-current={pageView === 'members' ? 'page' : undefined}
+                  onClick={() => setModal('members')}
+                  disabled={!workspace}
+                >
+                  <Users size={17} />
+                  Members
+                </button>
+                <button
+                  aria-current={pageView === 'agents' ? 'page' : undefined}
+                  onClick={() => setModal('agents')}
+                  disabled={!workspace}
+                >
+                  <Bot size={17} />
+                  Agent access
+                  <ArrowUpRight size={14} />
+                </button>
+              </nav>
+            )}
+            {pageView === 'notifications' && (
+              <Notifications
+                onCount={setUnread}
+                onClose={closePage}
+                onRequest={(r) => {
+                  setModal(null);
+                  openRequest(r);
+                }}
+                onOpen={(w, d, c) => {
+                  setModal(null);
+                  updatePreferences({ layout: 'normal' });
+                  selectArtifact(d, w, c ? { comment: c } : {});
+                }}
+              />
+            )}
+            {pageView === 'drafts' && (
+              <Drafts
+                user={user}
+                onClose={closePage}
+                onOpen={(w, d, c) => {
+                  setModal(null);
+                  updatePreferences({ layout: 'normal' });
+                  selectArtifact(d, w, c ? { comment: c } : {});
+                }}
+              />
+            )}
+            {pageView === 'account' && <Account onClose={closePage} />}
+            {pageView === 'organization' && organization?.isAdmin && (
+              <OrganizationSettings
+                user={user}
+                onClose={closePage}
+                onChanged={() => {
+                  void refreshWorkspaces().catch((e) => setError(errorText(e)));
+                }}
+              />
+            )}
+            {(pageView === 'members' || pageView === 'agents') && workspace && (
+              <Access
+                key={`${wid}:${pageView}`}
+                workspace={workspace}
+                user={user}
+                kind={pageView as 'members' | 'agents'}
+                onChanged={() => {
+                  void refreshWorkspaces().catch((e) => setError(errorText(e)));
+                }}
+                onClose={closePage}
+              />
+            )}
+            {pageView === 'organization' &&
+              organization &&
+              !organization.isAdmin && (
+                <div className="artifact-empty">
+                  <h1>Organization settings</h1>
+                  <p>Administrator access is required.</p>
+                  <button className="button" onClick={closePage}>
+                    Back to workspace
+                  </button>
+                </div>
+              )}
+          </>
+        ) : queue ? (
           <MyReviews workspaceId="" user={user} onOpen={openRequest} />
         ) : workspace && did ? (
-          <DocumentView
+          <ArtifactView
             key={`${wid}:${did}:${requestId ?? ''}:${requestVisit}`}
             id={did}
             requestId={requestId}
@@ -719,7 +891,7 @@ function WorkspaceApp({
             preferenceError={storageError}
             workspace={workspace}
             onSaved={() =>
-              void refreshDocuments().catch((e) => setError(errorText(e)))
+              void refreshArtifacts().catch((e) => setError(errorText(e)))
             }
             onLink={openLink}
           />
@@ -729,24 +901,30 @@ function WorkspaceApp({
           <section className="workspace-home">
             <div className="home-title">
               <div>
-                <span className="eyebrow">THINK IT THROUGH, TOGETHER</span>
+                <span className="eyebrow">
+                  {folderId ? 'FOLDER' : 'WORKSPACE'}
+                </span>
                 <h1>
-                  {workspace?.name ?? 'Your work starts here'}
-                  <span>.</span>
+                  {catalog.folders.find((f) => f.id === folderId)?.name ??
+                    workspace?.name ??
+                    'Your work starts here'}
                 </h1>
-                <p>Plans worth discussing. Decisions worth keeping.</p>
+                {!workspace && (
+                  <p>
+                    Create a workspace for your team’s specs and design reviews.
+                  </p>
+                )}
               </div>
               {workspace ? (
                 workspace.role !== 'viewer' && (
                   <button
                     className="button primary"
                     onClick={() => {
-                      setModal('document');
-                      setError(null);
+                      startArtifact();
                     }}
                   >
                     <Plus size={17} />
-                    New document
+                    New artifact
                   </button>
                 )
               ) : (
@@ -761,118 +939,173 @@ function WorkspaceApp({
             </div>
             {workspace && (
               <>
-                <div className="workspace-summary">
-                  <div>
-                    <FileText size={20} />
-                    <strong>{activeDocumentCount}</strong>
-                    <span>
-                      {activeDocumentCount === 1
-                        ? 'shared document'
-                        : 'shared documents'}
-                    </span>
-                  </div>
-                  <button onClick={() => setModal('members')}>
-                    <Users size={19} />
-                    <span>A place for your team</span>
-                    <ArrowUpRight size={16} />
-                  </button>
-                  <button onClick={() => setModal('agents')}>
-                    <Bot size={19} />
-                    <span>Bring an agent into the loop</span>
-                    <ArrowUpRight size={16} />
-                  </button>
-                </div>
-                <div className="document-list-heading">
-                  <h2>
-                    Your documents <span>{filtered.length}</span>
-                  </h2>
-                  <span>LAST UPDATED</span>
-                </div>
-                <div className="document-list">
-                  {filtered.map((d) => (
-                    <button key={d.id} onClick={() => selectDocument(d.id)}>
-                      <span className="file-icon">
-                        <FileText size={23} strokeWidth={1.5} />
+                {folderId && (
+                  <nav
+                    className="folder-breadcrumbs"
+                    aria-label="Folder location"
+                  >
+                    <button onClick={() => openFolder(null)}>
+                      {workspace.name}
+                    </button>
+                    {folderSegments(catalog.folders, folderId).map((f) => (
+                      <span key={f.id}>
+                        <ChevronRight size={14} />
+                        <button onClick={() => openFolder(f.id)}>
+                          {f.name}
+                        </button>
                       </span>
-                      <span className="file-title">
-                        <strong>
-                          {d.path
-                            .split('/')
-                            .pop()
-                            ?.replace(/\.md$/i, '')
-                            .replace(/[-_]/g, ' ')}
-                        </strong>
-                        <small>{d.path}</small>
+                    ))}
+                  </nav>
+                )}
+                {!folderId && (
+                  <div className="workspace-summary">
+                    <div>
+                      <FileText size={20} />
+                      <strong>{activeArtifactCount}</strong>
+                      <span>
+                        {activeArtifactCount === 1
+                          ? 'shared artifact'
+                          : 'shared artifacts'}
                       </span>
-                      <time>{dateLabel(d.updatedAt)}</time>
+                    </div>
+                    <button
+                      aria-current={pageView === 'members' ? 'page' : undefined}
+                      onClick={() => setModal('members')}
+                    >
+                      <Users size={19} />
+                      <span>Manage members</span>
                       <ArrowUpRight size={16} />
                     </button>
-                  ))}
-                  {!filtered.length && (
-                    <div className="home-empty">
-                      <FileText size={32} strokeWidth={1.2} />
-                      <h3>
-                        {search
-                          ? 'No documents match your search.'
-                          : 'Give your next idea a home.'}
-                      </h3>
-                      <p>
-                        {search
-                          ? 'Try another name or path.'
-                          : 'Start with a plan, a specification, or an open question.'}
-                      </p>
+                    <button
+                      aria-current={pageView === 'agents' ? 'page' : undefined}
+                      onClick={() => setModal('agents')}
+                    >
+                      <Bot size={19} />
+                      <span>Connect an agent</span>
+                      <ArrowUpRight size={16} />
+                    </button>
+                  </div>
+                )}
+                <div className="folder-browser-toolbar">
+                  <h2>{folderId ? 'Folder contents' : 'Browse folders'}</h2>
+                  {workspace.role !== 'viewer' && (
+                    <div className="button-row">
+                      <button
+                        className="button"
+                        onClick={() =>
+                          setFolderIntent({
+                            kind: 'create',
+                            parentId: folderId,
+                          })
+                        }
+                      >
+                        New folder
+                      </button>
+                      {folderId &&
+                        catalog.folders.find((f) => f.id === folderId) && (
+                          <button
+                            className="button"
+                            onClick={() =>
+                              setFolderIntent({
+                                kind: 'manage',
+                                folder: catalog.folders.find(
+                                  (f) => f.id === folderId,
+                                )!,
+                              })
+                            }
+                          >
+                            Manage folder
+                          </button>
+                        )}
                     </div>
                   )}
                 </div>
-                <div className="home-footer">
-                  <span className="small-brand-mark">w·</span>
-                  <span>
-                    Built for thoughtful work.
-                    <br />
-                    <small>
-                      Documents and discussions stay on your server.
-                    </small>
-                  </span>
+                <div className="folder-browser-list">
+                  {catalog.folders
+                    .filter((f) => f.parentId === folderId)
+                    .map((f) => (
+                      <button key={f.id} onClick={() => openFolder(f.id)}>
+                        <FolderOpen size={19} />
+                        <span>{f.name}</span>
+                        <ChevronRight size={16} />
+                      </button>
+                    ))}
+                </div>
+
+                <div className="artifact-list-heading">
+                  <h2>
+                    {folderId ? 'Artifacts' : 'All artifacts'}{' '}
+                    <span>
+                      {
+                        filtered.filter(
+                          (a) => !folderId || a.folderId === folderId,
+                        ).length
+                      }
+                    </span>
+                  </h2>
+                  <span>LAST UPDATED</span>
+                </div>
+                <div className="artifact-list">
+                  {filtered
+                    .filter((a) => !folderId || a.folderId === folderId)
+                    .map((d) => (
+                      <button key={d.id} onClick={() => selectArtifact(d.id)}>
+                        <span className="file-icon">
+                          <FileText size={23} strokeWidth={1.5} />
+                        </span>
+                        <span className="file-title">
+                          <strong>
+                            {d.path
+                              .split('/')
+                              .pop()
+                              ?.replace(/\.md$/i, '')
+                              .replace(/[-_]/g, ' ')}
+                          </strong>
+                          {!folderId && (
+                            <small>
+                              {folderSegments(catalog.folders, d.folderId)
+                                .map((f) => f.name)
+                                .join(' › ') || 'Workspace root'}
+                            </small>
+                          )}
+                        </span>
+                        <time>{dateLabel(d.updatedAt)}</time>
+                        <ArrowUpRight size={16} />
+                      </button>
+                    ))}
+                  {!filtered.some(
+                    (a) => !folderId || a.folderId === folderId,
+                  ) && (
+                    <div className="home-empty">
+                      <FileText size={32} strokeWidth={1.2} />
+                      <h3>No artifacts yet.</h3>
+                      <p>
+                        {workspace.role === 'viewer'
+                          ? 'An editor can add artifacts here.'
+                          : 'Add a design spec, API proposal, or rollout plan to review with your team.'}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </>
             )}
           </section>
         )}
       </main>
-      {modal === 'account' && <Account onClose={() => setModal(null)} />}
-      {modal === 'organization' && (
-        <OrganizationSettings
-          user={user}
-          onClose={() => setModal(null)}
-          onChanged={() => {
-            void refreshWorkspaces().catch((e) => setError(errorText(e)));
-          }}
+      {folderIntent && (
+        <FolderDialog
+          intent={folderIntent}
+          catalog={catalog}
+          workspaceId={wid}
+          onClose={() => setFolderIntent(null)}
+          onChanged={applyCatalog}
         />
       )}
-      {(modal === 'members' || modal === 'agents') && workspace && (
-        <Access
-          key={`${wid}:${modal}`}
-          workspace={workspace}
-          user={user}
-          kind={modal}
-          onChanged={() => {
-            void refreshWorkspaces().catch((e) => setError(errorText(e)));
-          }}
-          onClose={() => setModal(null)}
-        />
-      )}
-      {(modal === 'workspace' || modal === 'document') && (
+      {(modal === 'workspace' || modal === 'artifact') && (
         <Modal
-          title={
-            modal === 'workspace' ? 'Create a workspace' : 'Start a document'
-          }
+          title={modal === 'workspace' ? 'New workspace' : 'New artifact'}
           onClose={() => setModal(null)}
         >
-          <p className="muted">
-            {modal === 'workspace'
-              ? 'A private home for a project and the people working on it.'
-              : 'A clear plan begins with a few words. You can keep editing after you create it.'}
-          </p>
           <ErrorMessage message={error} />
           <form onSubmit={create} className="create-form">
             {modal === 'workspace' ? (
@@ -889,23 +1122,119 @@ function WorkspaceApp({
             ) : (
               <>
                 <label>
-                  Document path
+                  Artifact name
                   <input
-                    name="path"
-                    placeholder="e.g. plans/next-release.md"
                     required
-                    maxLength={240}
-                    pattern=".*\.[mM][dD]"
                     autoFocus
+                    maxLength={120}
+                    pattern="[^/\\\\]+"
+                    placeholder="e.g. Webhook delivery design"
+                    value={artifactName}
+                    onChange={(e) => {
+                      setArtifactName(e.target.value);
+                      if (isAnnotatableDocPath(e.target.value))
+                        setNewExtension(
+                          artifactExtension(e.target.value).toLowerCase(),
+                        );
+                    }}
                   />
-                  <small>Use folders to keep related documents together.</small>
                 </label>
+                <label>
+                  Format
+                  <Select
+                    aria-label="Artifact format"
+                    value={newExtension}
+                    onChange={(e) => {
+                      setNewExtension(e.target.value);
+                      if (isAnnotatableDocPath(artifactName))
+                        setArtifactName(
+                          artifactName.slice(
+                            0,
+                            -artifactExtension(artifactName).length,
+                          ) + e.target.value,
+                        );
+                    }}
+                  >
+                    {Array.from(
+                      new Set(['.md', '.html', '.mmd', '.dot', newExtension]),
+                    ).map((ext) => (
+                      <option key={ext} value={ext}>
+                        {ext === '.md'
+                          ? 'Markdown (.md)'
+                          : ext === '.html'
+                            ? 'HTML (.html)'
+                            : ext === '.mmd'
+                              ? 'Mermaid (.mmd)'
+                              : ext === '.dot'
+                                ? 'Graphviz (.dot)'
+                                : `${ext} (${['.mdx', '.htm', '.mermaid', '.gv'].includes(ext) ? 'imported format' : 'source text'})`}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
+                <label>
+                  Import a file
+                  <input
+                    type="file"
+                    accept={ANNOTATABLE_EXTENSIONS_HINT}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      if (
+                        !isAnnotatableDocPath(file.name) ||
+                        file.size > 4_000_000
+                      ) {
+                        setError(
+                          'Choose a supported text artifact smaller than one million characters.',
+                        );
+                        return;
+                      }
+                      let text: string;
+                      try {
+                        text = new TextDecoder('utf-8', { fatal: true }).decode(
+                          await file.arrayBuffer(),
+                        );
+                      } catch {
+                        setError('The file could not be read as UTF-8 text.');
+                        return;
+                      }
+                      if (text.length > 1_000_000 || text.includes('\0')) {
+                        setError(
+                          'Choose a UTF-8 text artifact smaller than one million characters.',
+                        );
+                        return;
+                      }
+                      setError(null);
+                      setArtifactName(file.name);
+                      setNewExtension(
+                        artifactExtension(file.name).toLowerCase(),
+                      );
+                      setArtifactBody(text);
+                    }}
+                  />
+                </label>
+                <FolderPicker
+                  folders={catalog.folders}
+                  value={createFolderId}
+                  onChange={setCreateFolderId}
+                />
                 <label>
                   Starting content
                   <textarea
                     name="body"
+                    value={artifactBody}
+                    onChange={(e) => setArtifactBody(e.target.value)}
                     placeholder={
-                      '# The next great idea\n\nWhat are we trying to achieve?'
+                      {
+                        markdown:
+                          '# Design spec\n\n## Context\nWhat problem are we solving?\n\n## Proposed design\nDescribe the approach and tradeoffs.\n\n## Open decisions\nWhat needs review before implementation?',
+                        html: '<!doctype html>\n<html>\n<head><title>Retry console</title></head>\n<body>\n<h1>Retry console</h1>\n<p>Review the proposed retry flow and failure states.</p>\n</body>\n</html>',
+                        mermaid:
+                          'flowchart LR\nAPI --> Queue\nQueue --> Worker',
+                        graphviz:
+                          'digraph Delivery {\n  API -> Queue;\n  Queue -> Worker;\n}',
+                        text: 'Paste the source to review…',
+                      }[artifactFormat(`artifact${newExtension}`)]
                     }
                     rows={7}
                     maxLength={1000000}
@@ -926,7 +1255,7 @@ function WorkspaceApp({
                   ? 'Creating…'
                   : modal === 'workspace'
                     ? 'Create workspace'
-                    : 'Create document'}
+                    : 'Create artifact'}
               </button>
             </div>
           </form>

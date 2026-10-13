@@ -1,6 +1,6 @@
 apiVersion: v2
 name: checkpoint
-description: Checkpoint Markdown workspaces for human and agent review
+description: Checkpoint shared artifact review for engineering teams and coding agents
 type: application
-version: 0.1.0
-appVersion: '0.1.0'
+version: 0.3.0
+appVersion: '0.3.0'

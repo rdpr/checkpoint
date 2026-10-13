@@ -1,7 +1,7 @@
 import { readDraft, writeDraft } from './drafts';
 import { useEffect, useRef, useState } from 'react';
 
-// Drafts belong to this account and document, with independent branches per page.
+// Drafts belong to this account and artifact, with independent branches per page.
 // Write synchronously so navigation immediately after typing cannot lose a change.
 export function useReviewDraft<T>(key: string, empty: T) {
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +21,7 @@ export function useReviewDraft<T>(key: string, empty: T) {
     };
   }, []);
   function update(next: T | ((previous: T) => T)) {
-    // A request may finish after navigating away and reopening this document.
+    // A request may finish after navigating away and reopening this artifact.
     // Apply its completion to the newest stored draft, not an unmounted copy.
     let previous = current.current;
     if (typeof next === 'function' && !mounted.current) {

@@ -20,6 +20,10 @@ chmod 600 .env secrets/*
 
 Set `APP_ORIGIN` in `.env` to the exact HTTPS origin, without a trailing slash or path. Set `CHECKPOINT_IMAGE` to the release image, preferably its digest from `release.json`. The app port is bound to host loopback; point the reverse proxy at `127.0.0.1:4310`.
 
+Configure `TRUSTED_PROXIES` with the reverse proxy's actual source IP addresses or CIDR ranges as seen by the application (comma-separated). For Helm, set the equivalent `trustedProxies` list. For a proxy connecting directly to a native loopback listener, this can be `127.0.0.1,::1`; a Docker-published port may instead expose the bridge gateway address. Determine that address for your deployment rather than trusting an entire private network. Trust only proxy addresses whose forwarding behavior you control, restrict direct access to the application, and configure the proxy to replace client-supplied `X-Forwarded-For` with the real client address (or append the verified peer at each hop of a controlled proxy chain). The example Caddy reverse proxy uses its default forwarding behavior. Never configure universal trust or use client-supplied addresses as trusted proxies.
+
+With no trusted proxies configured, forwarded headers are ignored. Behind a proxy this means all users share the peer's authentication allowance, so configure this setting before production use. Authentication routes allow 20 attempts per client per minute and 10 per account/client pair, with a separate installation-wide ceiling of 2,000 accepted attempts per minute. Logout and nonexistent authentication routes do not consume these allowances. Accounts are normalized using trimmed, lowercase email addresses; an attacker on a different client cannot consume another client's account allowance.
+
 The container runs as UID/GID **1000**. Secret files must be readable by that identity. If the host operator has a different UID, arrange ownership or an ACL for UID 1000; do not make secret files world-readable. Compose file secrets are bind mounts, so secret `uid`/`mode` declarations do not fix host ownership.
 
 ```sh
@@ -51,7 +55,7 @@ Download `checkpoint-VERSION.tgz` from the release. Create a private values file
 origin: https://checkpoint.example.com
 image:
   repository: ghcr.io/rdpr/checkpoint
-  tag: '0.1.0'
+  tag: '0.3.0'
   digest: '' # Prefer the sha256:... digest from release.json.
 storage:
   className: YOUR_BLOCK_STORAGE_CLASS
@@ -72,13 +76,26 @@ Create a namespace and metrics secret. The secret file must contain at least 32 
 ```sh
 kubectl create namespace checkpoint
 kubectl -n checkpoint create secret generic checkpoint-metrics --from-file=token=/private/metrics-token
-helm install checkpoint ./checkpoint-0.1.0.tgz -n checkpoint -f installation.private.yaml
+helm install checkpoint ./checkpoint-0.3.0.tgz -n checkpoint -f installation.private.yaml
+kubectl -n checkpoint wait --for=create pod/checkpoint-0 --timeout=180s
 kubectl -n checkpoint wait --for=jsonpath='{.status.phase}'=Running pod/checkpoint-0 --timeout=180s
 kubectl -n checkpoint exec -i checkpoint-0 -c app -- node --import tsx server/operator.ts bootstrap < bootstrap.private.json
 kubectl -n checkpoint rollout status statefulset/checkpoint --timeout=120s
 ```
 
 Remove the bootstrap input after success. Do not use Helm `--wait` before bootstrap on a new installation: readiness deliberately requires an initialized administrator. Data and backup PVCs are retained. Test deployment and restore with your actual CSI driver and ingress before onboarding users.
+
+## Install in your browser
+
+After the server is running, open its HTTPS address to install Checkpoint as a web app. Localhost also works for development. No additional server configuration is needed: the app includes a manifest, standalone display mode, and desktop and mobile icons.
+
+- **Chrome and Edge:** when the browser offers installation, Checkpoint shows an **Install Checkpoint** suggestion. You can also use the browser’s install icon or app installation menu. Dismissing the suggestion hides it for 30 days; **Account & appearance** still offers installation when available.
+- **iPhone and iPad:** use **Share → Add to Home Screen**.
+- **Safari on Mac:** use **File → Add to Dock**.
+
+Browser support and prompt timing vary. Checkpoint cannot force the browser’s native prompt to appear immediately. The account screen includes manual installation guidance when a native prompt is unavailable. See [MDN’s installation guide](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Making_PWAs_installable) for browser requirements.
+
+Installed Checkpoint uses the same server, sign-in, and workspace permissions. It requires a network connection to load and save reviews. Installation does not add offline artifact caching or background synchronization; unsaved drafts retain the existing browser-local recovery behavior.
 
 ## Microsoft Entra ID
 
@@ -93,7 +110,7 @@ Register a single-tenant **Web** application with redirect URI `https://YOUR-ORI
 
 In Compose, fill the IDs in `.env` and the mounted Entra secret file. In Helm, create a Secret with key `client-secret`, set `entra.secretName`, `entra.tenantId` and `entra.clientId`, and use `authMode: optional` initially.
 
-Existing administrators must sign in with their password, open **Account** and connect Microsoft before enforcement. Email equality never links accounts automatically. New users need a valid workspace invitation. Entra authenticates identity; it does not grant Checkpoint membership or administrator roles. The application requests `openid profile email`, with no Microsoft Graph application permissions.
+Existing administrators must sign in with their password, open **your name → Account & appearance** and connect Microsoft before enforcement. Email equality never links accounts automatically. New users need a valid workspace invitation. Entra authenticates identity; it does not grant Checkpoint membership or administrator roles. The application requests `openid profile email`, with no Microsoft Graph application permissions.
 
 Use enterprise-application assignments and your tenant's MFA policy to control sign-in. Entra sessions last eight hours. Enforcing Entra immediately invalidates ordinary password sessions; agent keys remain independent. Directory synchronization is not implemented: offboard people in Checkpoint to revoke existing application sessions and keys immediately. Rotate client secrets before expiry and restart after changing configuration.
 

@@ -9,7 +9,7 @@ RUN npm run build && npm prune --omit=dev --no-audit --no-fund
 
 FROM ${NODE_IMAGE} AS runtime
 ARG SOURCE_COMMIT=development
-ARG BUILD_VERSION=0.1.0
+ARG BUILD_VERSION=0.3.0
 LABEL org.opencontainers.image.source="https://github.com/rdpr/checkpoint" org.opencontainers.image.version=$BUILD_VERSION org.opencontainers.image.revision=$SOURCE_COMMIT org.opencontainers.image.licenses="Apache-2.0"
 ENV SOURCE_COMMIT=$SOURCE_COMMIT APP_RELEASE=$BUILD_VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates && rm -rf /var/lib/apt/lists/*
