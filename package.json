@@ -30,7 +30,7 @@
     "@prometheus-io/client": "0.16.1",
     "express": "^5.1.0",
     "katex": "0.18.2",
-    "lucide-react": "^0.468.0",
+    "lucide-react": "^1.54.0",
     "marked": "17.0.6",
     "openid-client": "6.8.8",
     "parse5": "8.0.0",
