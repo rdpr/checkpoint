@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.1 — 2026-10-13
+
+### Security and reliability
+
+- Bound server-side diff comment validation with isolated workers, a deadline, heap limits and bounded concurrency. Expensive line and word comparisons cannot block the shared request loop; ordinary artifact discussions remain available when a comparison exceeds the budget.
+- Preserve upstream diff block numbering and server-derived quotes, retain atomic comment retry receipts, and recheck current workspace access, archive state, agent keys and browser sessions before saving asynchronous comparison feedback.
+- Apply authentication limits to verified clients behind explicitly trusted proxies, with per-client/account allowances and a separate installation-wide overload ceiling. Logout and nonexistent authentication routes no longer consume sign-in capacity.
+
+### Dependencies
+
+- Update Lucide, Zod, TypeScript, Vite, the React Vite plugin, Node type declarations and the development process runner. Adapt MCP schema registration to Zod 4 and repair the development update's peer-dependency lockfile. Plannotator UI/core versions remain pinned.
+- Update the pinned checkout, Node setup, artifact download, registry login and kind GitHub Actions.
+
+### Upgrading
+
+Database schema remains **12**. No database migration is required from 0.3.0. Take and verify a backup before upgrading, then reload open browser tabs and refresh MCP tool discovery.
+
+**Reverse-proxy deployments must configure `TRUSTED_PROXIES`** with the proxy's actual source IPs/CIDRs as seen by the app, or set Helm's `trustedProxies` list. Trust only controlled proxies that overwrite client-supplied forwarding headers or append verified peers through a controlled chain. Forwarded headers remain ignored by default; leaving proxy trust unset makes users share the proxy's authentication allowance. See [installation](docs/installation.md).
+
+Large comparisons can return `comparison_too_complex` or `comparison_busy`; leave an ordinary artifact discussion or retry later. Rolling back to 0.3.0 needs no schema restore, but reintroduces the availability issues addressed here. Publication does not automatically upgrade installations.
+
 ## 0.3.0 — 2026-10-13
 
 ### Artifact review
