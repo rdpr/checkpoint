@@ -11,7 +11,9 @@ import { createApp } from '../server/app.ts';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-async function fixture(options: Partial<Parameters<typeof createApp>[1]> = {}) {
+async function fixture(
+  options: Partial<Parameters<typeof createApp>[1]> = {},
+) {
   const directory = mkdtempSync(join(tmpdir(), 'pw-http-'));
   const filename = join(directory, 'db.sqlite');
   const store = new Store(filename);
@@ -47,6 +49,284 @@ async function fixture(options: Partial<Parameters<typeof createApp>[1]> = {}) {
   };
   return { store, owner, workspace, base, request, close, filename };
 }
+
+test('trusted proxies isolate authentication clients and exclude logout and unknown routes', async () => {
+  const f = await fixture({ trustedProxies: ['127.0.0.1/32'] });
+  try {
+    const attempt = (
+      ip: string,
+      path = '/api/auth/login',
+      password = 'wrong-password',
+      email = 'owner@example.test',
+    ) =>
+      f.request(path, {
+        method: 'POST',
+        headers: { 'X-Forwarded-For': ip },
+        body: JSON.stringify({ email, password }),
+      });
+    for (let i = 0; i < 10; i++) {
+      assert.equal(
+        (
+          await attempt(
+            i % 2 ? '::ffff:203.0.113.5' : '203.0.113.5, 127.0.0.1',
+            i % 2 ? '/API/AUTH/LOGIN/' : '/api/auth/login',
+            'wrong-password',
+            i % 2 ? ' OWNER@EXAMPLE.TEST ' : 'owner@example.test',
+          )
+        ).status,
+        401,
+      );
+    }
+    assert.equal((await attempt('203.0.113.5')).status, 429);
+    assert.equal(
+      (
+        await attempt(
+          '203.0.113.6',
+          '/api/auth/login',
+          'owner-password-1234',
+        )
+      ).status,
+      200,
+    );
+    // Client-supplied entries left of the first untrusted hop cannot rotate the key.
+    assert.equal((await attempt('198.51.100.1, 203.0.113.5')).status, 429);
+    for (let i = 0; i < 25; i++) {
+      assert.equal(
+        (await attempt('203.0.113.7', '/api/auth/logout')).status,
+        200,
+      );
+      assert.notEqual(
+        (await attempt('203.0.113.7', '/api/auth/missing')).status,
+        429,
+      );
+    }
+    assert.equal(
+      (
+        await attempt(
+          '203.0.113.7',
+          '/api/auth/login',
+          'owner-password-1234',
+        )
+      ).status,
+      200,
+    );
+    // A separate per-client allowance still bounds attempts against many accounts.
+    for (let i = 0; i < 20; i++)
+      assert.equal(
+        (
+          await attempt(
+            '203.0.113.8',
+            '/api/auth/login',
+            'wrong-password',
+            `unknown${i}@example.test`,
+          )
+        ).status,
+        401,
+      );
+    assert.equal(
+      (
+        await attempt(
+          '203.0.113.8',
+          '/api/auth/login',
+          'owner-password-1234',
+        )
+      ).status,
+      429,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test('untrusted peers cannot rotate authentication quotas with forwarding headers', async () => {
+  const f = await fixture();
+  try {
+    for (let i = 0; i < 11; i++) {
+      const response = await f.request('/api/auth/login', {
+        method: 'POST',
+        headers: { 'X-Forwarded-For': `203.0.113.${i + 1}` },
+        body: JSON.stringify({
+          email: 'owner@example.test',
+          password: 'wrong-password',
+        }),
+      });
+      assert.equal(response.status, i < 10 ? 401 : 429);
+    }
+  } finally {
+    await f.close();
+  }
+});
+
+test('expensive diff comments are bounded across HTTP aliases and MCP while other workspaces stay responsive', async () => {
+  const f = await fixture();
+  const client = new Client({ name: 'diff-budget-test', version: '1' });
+  try {
+    const key = f.store.createToken(f.owner, f.workspace.id, {
+      name: 'Diff agent',
+      scope: 'write',
+    });
+    const headers = { Authorization: `Bearer ${key.token}` };
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), {
+        requestInit: { headers },
+      }),
+    );
+    const other = f.store.createWorkspace(f.owner, {
+      name: 'Independent workspace',
+    });
+    const readKey = f.store.createToken(f.owner, other.id, {
+      name: 'Independent reader',
+      scope: 'read',
+    });
+    const fixtures = [
+      ['a\n'.repeat(50000), 'b\n'.repeat(50000)],
+      ['.!'.repeat(50000), '?:'.repeat(50000)],
+    ];
+    for (const [i, [oldText, newText]] of fixtures.entries()) {
+      const initial = f.store.createArtifact(f.owner, {
+        workspaceId: f.workspace.id,
+        path: `budget-${i}.txt`,
+        body: oldText,
+      });
+      const current = f.store.updateArtifact(f.owner, {
+        artifactId: initial.id,
+        expectedRevisionId: initial.currentRevisionId,
+        body: newText,
+      });
+      const input = {
+        artifactId: initial.id,
+        revisionId: current.currentRevisionId,
+        submissionId: crypto.randomUUID(),
+        body: 'Review this change',
+        diff: {
+          baseRevisionId: initial.currentRevisionId,
+          blockIndex: 0,
+          side: 'modified',
+        },
+      };
+      const started = performance.now();
+      const pending = f.request(
+        `/api/${i ? 'documents' : 'artifacts'}/${initial.id}/comments`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(input),
+        },
+      );
+      // Check the real request loop throughout the worker's lifetime.
+      for (let j = 0; j < 3; j++) {
+        const health = await f.request('/api/health', {
+          signal: AbortSignal.timeout(1000),
+        });
+        assert.equal(health.status, 200);
+        const read = await f.request(
+          `/api/workspaces/${other.id}/artifacts`,
+          {
+            headers: { Authorization: `Bearer ${readKey.token}` },
+            signal: AbortSignal.timeout(1000),
+          },
+        );
+        assert.equal(read.status, 200);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      const response = await pending;
+      assert.equal(response.status, 422);
+      assert.equal((await response.json()).code, 'comparison_too_complex');
+      assert.ok(performance.now() - started < 5000);
+      const mcp = await client.callTool({
+        name: 'create_comment',
+        arguments: input,
+      });
+      assert.equal(mcp.isError, true);
+      assert.match(JSON.stringify(mcp.content), /comparison_too_complex/);
+      assert.equal(f.store.comments(f.owner, initial.id).length, 0);
+      assert.equal(
+        f.store.one(
+          'SELECT submission_id FROM comment_submissions WHERE submission_id=?',
+          input.submissionId,
+        ),
+        undefined,
+      );
+      const discussion = await f.request(
+        `/api/artifacts/${initial.id}/comments`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ ...input, diff: null }),
+        },
+      );
+      assert.equal(discussion.status, 201);
+    }
+  } finally {
+    await client.close();
+    await f.close();
+  }
+});
+
+test('diff submissions remain atomic and recheck revoked credentials after asynchronous comparison', async () => {
+  const f = await fixture();
+  try {
+    const initial = f.store.createArtifact(f.owner, {
+      workspaceId: f.workspace.id,
+      path: 'atomic.md',
+      body: '# Before\n',
+    });
+    const current = f.store.updateArtifact(f.owner, {
+      artifactId: initial.id,
+      expectedRevisionId: initial.currentRevisionId,
+      body: '# After\n',
+    });
+    const input = {
+      artifactId: initial.id,
+      revisionId: current.currentRevisionId,
+      submissionId: crypto.randomUUID(),
+      body: 'Keep the explanation',
+      diff: {
+        baseRevisionId: initial.currentRevisionId,
+        blockIndex: 0,
+        side: 'modified',
+      },
+    };
+    const headers = {
+      Cookie: `pw_session=${f.store.session(f.owner.user)}`,
+    };
+    const submit = () =>
+      f.request(`/api/artifacts/${initial.id}/comments`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(input),
+      });
+    const [a, b] = await Promise.all([submit(), submit()]);
+    assert.equal(a.status, 201);
+    assert.equal(b.status, 201);
+    const first = await a.json();
+    assert.equal((await b.json()).id, first.id);
+    assert.equal(first.quote, '- # Before\n+ # After');
+    assert.equal(f.store.comments(f.owner, initial.id).length, 1);
+    const key = f.store.createToken(f.owner, f.workspace.id, {
+      name: 'Revoked during comparison',
+      scope: 'write',
+    });
+    const pending = f.store.addComment(f.store.tokenActor(key.token)!, {
+      ...input,
+      submissionId: crypto.randomUUID(),
+    });
+    f.store.revokeToken(f.owner, f.workspace.id, key.id);
+    await assert.rejects(pending, { code: 'unauthorized' });
+    assert.equal(f.store.comments(f.owner, initial.id).length, 1);
+    const session = f.store.session(f.owner.user);
+    const browserPending = f.store.addComment(
+      f.store.sessionActor(session)!,
+      { ...input, submissionId: crypto.randomUUID() },
+    );
+    f.store.logout(session);
+    assert.equal(f.store.sessionActor(session), undefined);
+    await assert.rejects(browserPending, { code: 'unauthorized' });
+    assert.equal(f.store.comments(f.owner, initial.id).length, 1);
+  } finally {
+    await f.close();
+  }
+});
 
 test('HTTP sessions, CSRF/host checks, permissions and logout', async () => {
   const f = await fixture();
@@ -1134,7 +1414,7 @@ test('comment submission retries are durable, scoped to the author, and never re
     const reopened = new Store(f.filename);
     try {
       assert.equal(
-        reopened.addComment(f.owner, { ...input, artifactId: doc.id }).id,
+        (await reopened.addComment(f.owner, { ...input, artifactId: doc.id })).id,
         comment.id,
       );
     } finally {

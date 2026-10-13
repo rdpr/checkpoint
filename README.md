@@ -97,6 +97,8 @@ The development UI runs at `http://localhost:5173`. Create the first account the
 
 Checkpoint uses the pinned open-source Plannotator viewer, editor and diff components. It is an independent project, not affiliated with the commercial Plannotator Workspaces offering. Artifact Server is not required.
 
+Server-side diff comment validation runs in isolated workers with a 1.5-second deadline and at most two concurrent comparisons. Comparisons that exceed the budget can still receive ordinary artifact discussions; rejected diff comments save no comment or submission receipt. Reverse-proxy deployments must configure explicit trusted proxy addresses so authentication limits apply to individual clients; see [installation](docs/installation.md).
+
 Checkpoint is licensed under [Apache-2.0](LICENSE). See [third-party notices](THIRD_PARTY_NOTICES.md); distributed browser builds include `/THIRD_PARTY_LICENSES.txt` with dependency license texts.
 
 Logo SVGs, transparent PNGs, and app icons are in [`public/brand`](public/brand). See the [asset guide](docs/branding.md) for light and dark variants.

@@ -40,9 +40,9 @@ export async function handleMcp(
         `Deprecated alias. Use ${name}. ${description}`,
         legacyShape,
         readOnly,
-        (input) =>
+        async (input) =>
           legacyFields(
-            fn(legacyFields(input) as z.infer<z.ZodObject<T>>),
+            await fn(legacyFields(input) as z.infer<z.ZodObject<T>>),
             true,
           ),
       );
@@ -61,7 +61,7 @@ export async function handleMcp(
       },
       async (input) => {
         try {
-          const data = fn(input as z.infer<z.ZodObject<T>>);
+          const data = await fn(input as z.infer<z.ZodObject<T>>);
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(data) }],
             structuredContent: { result: data },
