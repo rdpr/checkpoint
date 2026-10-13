@@ -20,6 +20,10 @@ chmod 600 .env secrets/*
 
 Set `APP_ORIGIN` in `.env` to the exact HTTPS origin, without a trailing slash or path. Set `CHECKPOINT_IMAGE` to the release image, preferably its digest from `release.json`. The app port is bound to host loopback; point the reverse proxy at `127.0.0.1:4310`.
 
+Configure `TRUSTED_PROXIES` with the reverse proxy's actual source IP addresses or CIDR ranges as seen by the application (comma-separated). For Helm, set the equivalent `trustedProxies` list. For a proxy connecting directly to a native loopback listener, this can be `127.0.0.1,::1`; a Docker-published port may instead expose the bridge gateway address. Determine that address for your deployment rather than trusting an entire private network. Trust only proxy addresses whose forwarding behavior you control, restrict direct access to the application, and configure the proxy to replace client-supplied `X-Forwarded-For` with the real client address (or append the verified peer at each hop of a controlled proxy chain). The example Caddy reverse proxy uses its default forwarding behavior. Never configure universal trust or use client-supplied addresses as trusted proxies.
+
+With no trusted proxies configured, forwarded headers are ignored. Behind a proxy this means all users share the peer's authentication allowance, so configure this setting before production use. Authentication routes allow 20 attempts per client per minute and 10 per account/client pair, with a separate installation-wide ceiling of 2,000 accepted attempts per minute. Logout and nonexistent authentication routes do not consume these allowances. Accounts are normalized using trimmed, lowercase email addresses; an attacker on a different client cannot consume another client's account allowance.
+
 The container runs as UID/GID **1000**. Secret files must be readable by that identity. If the host operator has a different UID, arrange ownership or an ACL for UID 1000; do not make secret files world-readable. Compose file secrets are bind mounts, so secret `uid`/`mode` declarations do not fix host ownership.
 
 ```sh

@@ -61,7 +61,7 @@ try {
     path: 'decisions/outbox-pattern.md',
     body: '# Use a transactional outbox\n\nCommit events alongside application state. Dispatch asynchronously to keep customer endpoint failures outside the API transaction.',
   });
-  const thread = store.addComment(human, {
+  const thread = await store.addComment(human, {
     artifactId: artifact.id,
     revisionId: artifact.currentRevisionId,
     quote: 'At-least-once delivery; preserve the delivery ID across retries.',
@@ -71,7 +71,7 @@ try {
     commentId: thread.id,
     body: 'Added stable delivery IDs in revision 2. I’ll also test a worker crash after delivery but before acknowledgment.',
   });
-  store.addComment(human, {
+  await store.addComment(human, {
     artifactId: artifact.id,
     revisionId: artifact.currentRevisionId,
     quote: 'Per-tenant concurrency limits and separate retry budgets.',

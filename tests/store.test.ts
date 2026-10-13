@@ -104,7 +104,7 @@ test('viewer access, scoped keys, cross-workspace IDs, revocation, and removal a
       }),
     };
     assert.equal(store.artifact(viewer, artifact.id).id, artifact.id);
-    assert.throws(
+    await assert.rejects(
       () =>
         store.addComment(viewer, {
           artifactId: artifact.id,
@@ -176,7 +176,7 @@ test('viewer access, scoped keys, cross-workspace IDs, revocation, and removal a
 test('comments keep their revision and quote through edits, replies and resolution', async () => {
   const { store, owner, artifact } = await fixture();
   try {
-    const comment = store.addComment(owner, {
+    const comment = await store.addComment(owner, {
       artifactId: artifact.id,
       revisionId: artifact.currentRevisionId,
       body: 'Clarify this.',
@@ -221,7 +221,7 @@ test('restart retains artifacts, revisions, comments, identities and revocations
       expectedRevisionId: doc.currentRevisionId,
       body: '# Durable\n\nContent',
     });
-    store.addComment(owner, {
+    await store.addComment(owner, {
       artifactId: doc.id,
       revisionId: updated.currentRevisionId,
       body: 'Still here.',
@@ -285,13 +285,13 @@ test('restart retains artifacts, revisions, comments, identities and revocations
     assert.equal(store.comments(owner, doc.id)[0].body, 'Still here.');
     assert.equal(store.comments(owner, doc.id)[0].kind, 'comment');
     assert.deepEqual(store.comments(owner, doc.id)[0].images, []);
-    const deletion = store.addComment(owner, {
+    const deletion = await store.addComment(owner, {
       artifactId: doc.id,
       revisionId: updated.currentRevisionId,
       kind: 'deletion',
       quote: 'Content',
     });
-    const label = store.addComment(owner, {
+    const label = await store.addComment(owner, {
       artifactId: doc.id,
       revisionId: updated.currentRevisionId,
       kind: 'label',
@@ -398,7 +398,7 @@ test('invalid paths and cross-artifact revision references never create partial 
         }),
       fails('not_found'),
     );
-    assert.throws(
+    await assert.rejects(
       () =>
         store.addComment(owner, {
           artifactId: artifact.id,
@@ -519,7 +519,7 @@ test('schema 11 upgrade preserves nested paths, archived artifacts and lost-save
       body: 'Preserve this unsent acknowledgment.',
       submissionId: crypto.randomUUID(),
     };
-    const comment = store.addComment(owner, input);
+    const comment = await store.addComment(owner, input);
     // Schema 11 used the legacy property name in receipt fingerprints.
     const { addComment } = await import('../server/schemas.ts');
     const { digest } = await import('../server/security.ts');
@@ -549,7 +549,7 @@ test('schema 11 upgrade preserves nested paths, archived artifacts and lost-save
       'plans',
     ]);
     assert.ok(store.artifact(owner, archived.id).archivedAt);
-    assert.equal(store.addComment(owner, input).id, comment.id);
+    assert.equal((await store.addComment(owner, input)).id, comment.id);
     assert.equal(store.comments(owner, artifact.id).length, 1);
     assert.equal(store.search(owner, { query: 'Durable' })[0].id, artifact.id);
     assert.deepEqual(store.all('PRAGMA foreign_key_check'), []);
