@@ -45,6 +45,7 @@ spec:
           env: &environment
             - {name: APP_ORIGIN, value: {{ required "origin is required" .Values.origin | quote }}}
             - {name: AUTH_MODE, value: {{ .Values.authMode | quote }}}
+            - {name: TRUSTED_PROXIES, value: {{ join "," .Values.trustedProxies | quote }}}
             {{- if .Values.entra.secretName }}
             - {name: ENTRA_TENANT_ID, value: {{ required "entra.tenantId required" .Values.entra.tenantId | quote }}}
             - {name: ENTRA_CLIENT_ID, value: {{ required "entra.clientId required" .Values.entra.clientId | quote }}}

@@ -41,13 +41,14 @@ import {
   verifyPassword,
 } from './security.ts';
 import * as schema from './schemas.ts';
-import { computePlanDiff } from '@plannotator/ui/utils/planDiffEngine';
+import { commentDiffBlock, type CommentDiffBlock } from './diff.ts';
 import { artifactLinks, relativePath } from './links.ts';
 import { currentDecisions } from '../shared/review.ts';
 import { formatFeedback } from './feedback.ts';
 
 export interface Actor {
   user: User;
+  session?: { hash: string; requireSso: boolean };
   token?: {
     id: string;
     workspaceId: string;
@@ -530,7 +531,9 @@ export class Store {
       now(),
     );
     const user = row && this.user(row.userId);
-    return user ? { user } : undefined;
+    return user
+      ? { user, session: { hash: digest(token), requireSso } }
+      : undefined;
   }
   logout(token: string) {
     this.run('DELETE FROM sessions WHERE hash=?', digest(token));
@@ -1188,7 +1191,7 @@ export class Store {
       ),
     }));
   }
-  addComment(actor: Actor, input: unknown) {
+  async addComment(actor: Actor, input: unknown) {
     const data = schema.addComment.parse(input);
     const artifact = this.artifactRow(actor, data.artifactId, true);
     if (artifactFormat(artifact.path) === 'html' && !data.diff) {
@@ -1199,11 +1202,11 @@ export class Store {
       data.quote = anchor.originalText;
       data.anchor = anchor;
     }
-    if (!data.submissionId) return this.insertComment(actor, data);
     // A lost response must not create a second discussion. Keep receipts after
     // deletion too, so retrying cannot resurrect a deliberately deleted comment.
     const fingerprint = digest(JSON.stringify(data));
-    return this.transaction(() => {
+    const submitted = () => {
+      if (!data.submissionId) return;
       const receipt = this.one<{
         artifactId: string;
         authorId: string;
@@ -1238,20 +1241,50 @@ export class Store {
         );
         return comment;
       }
-      const comment = this.insertComment(actor, data);
-      this.run(
-        'INSERT INTO comment_submissions VALUES(?,?,?,?,?,?)',
-        data.submissionId!,
-        data.artifactId,
-        actor.user.id,
-        actor.token?.id ?? null,
-        fingerprint,
-        comment.id,
+    };
+    const previous = submitted();
+    if (previous) return previous;
+    let block: CommentDiffBlock | undefined;
+    if (data.diff) {
+      const revision = this.revisionRow(data.artifactId, data.revisionId);
+      const base = this.revisionRow(data.artifactId, data.diff.baseRevisionId);
+      requireThat(
+        base.number < revision.number,
+        400,
+        'invalid_comparison',
+        'The baseline must precede the reviewed revision.',
       );
+      // The upstream engine runs outside both the event loop and SQLite transaction.
+      block = await commentDiffBlock(
+        base.body,
+        revision.body,
+        data.diff.blockIndex,
+      );
+    }
+    return this.transaction(() => {
+      // Membership, credentials, archive state and receipts may change while awaiting.
+      this.artifactRow(actor, data.artifactId, true);
+      const previous = submitted();
+      if (previous) return previous;
+      const comment = this.insertComment(actor, data, block);
+      if (data.submissionId)
+        this.run(
+          'INSERT INTO comment_submissions VALUES(?,?,?,?,?,?)',
+          data.submissionId,
+          data.artifactId,
+          actor.user.id,
+          actor.token?.id ?? null,
+          fingerprint,
+          comment.id,
+        );
       return comment;
     });
   }
-  private insertComment(actor: Actor, data: z.infer<typeof schema.addComment>) {
+  private insertComment(
+    actor: Actor,
+    data: z.infer<typeof schema.addComment>,
+    block?: CommentDiffBlock,
+  ) {
     requireThat(
       data.kind === 'deletion' ||
         data.body.length > 0 ||
@@ -1281,16 +1314,6 @@ export class Store {
     }
     const revision = this.revisionRow(data.artifactId, data.revisionId);
     if (data.diff) {
-      const base = this.revisionRow(data.artifactId, data.diff.baseRevisionId);
-      requireThat(
-        base.number < revision.number,
-        400,
-        'invalid_comparison',
-        'The baseline must precede the reviewed revision.',
-      );
-      const block = computePlanDiff(base.body, revision.body).blocks[
-        data.diff.blockIndex
-      ];
       requireThat(
         block &&
           block.type !== 'unchanged' &&
@@ -1828,6 +1851,22 @@ export class Store {
       'unauthorized',
       'This account is unavailable. Sign in again.',
     );
+    if (actor.session)
+      requireThat(
+        this.one(
+          `SELECT s.user_id FROM sessions s JOIN users u ON u.id=s.user_id
+           WHERE s.hash=? AND s.user_id=? AND s.expires_at>?
+           AND (?=0 OR s.auth_method='entra' OR u.recovery_until>?)`,
+          actor.session.hash,
+          actor.user.id,
+          now(),
+          Number(actor.session.requireSso),
+          now(),
+        ),
+        401,
+        'unauthorized',
+        'This session was revoked or expired. Sign in again.',
+      );
     if (actor.token)
       requireThat(
         this.one(
