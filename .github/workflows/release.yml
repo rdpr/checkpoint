@@ -46,7 +46,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310
         with:
           version: v3.20.0
       - name: Publish tested image and release files
